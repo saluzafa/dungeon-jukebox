@@ -40,6 +40,7 @@ const selectedAudioId = ref<string | null>(null)
 const selectedAudioIds = ref<string[]>([])
 const lastSelectedAudioId = ref<string | null>(null)
 const searchQuery = ref('')
+const audioSortMode = ref<'name' | 'title'>('name')
 const isDropOver = ref(false)
 const dragOverDirectoryPath = ref<string | null>(null)
 const currentDirectoryPath = ref('')
@@ -73,6 +74,10 @@ const filteredAudioFiles = computed(() => {
     const collectionName = audio.collectionName.toLowerCase()
     return title.includes(query) || audio.name.toLowerCase().includes(query) || collectionName.includes(query)
   })
+})
+
+const sortedFilteredAudioFiles = computed(() => {
+  return [...filteredAudioFiles.value].sort(compareAudioFiles)
 })
 
 const visibleDirectories = computed<DirectoryBrowserEntry[]>(() => {
@@ -136,10 +141,10 @@ const visibleAudioFiles = computed<AudioFileEntry[]>(() => {
   const normalizedCurrent = normalizePath(currentDirectoryPath.value)
   return props.selectedCollection.audioFiles
     .filter((audio) => normalizePath(audio.relativePath) === normalizedCurrent)
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort(compareAudioFiles)
 })
 const currentlyDisplayedAudioFiles = computed<AudioFileEntry[]>(() =>
-  isSearchActive.value ? filteredAudioFiles.value : visibleAudioFiles.value,
+  isSearchActive.value ? sortedFilteredAudioFiles.value : visibleAudioFiles.value,
 )
 
 const selectedAudio = computed(() => allAudioFiles.value.find((audio) => audio.id === selectedAudioId.value) ?? null)
@@ -198,6 +203,17 @@ function resolveParentDirectoryPath(path: string): string | null {
 
 function audioDisplayTitle(audio: AudioFileEntry): string {
   return audio.metadata.title?.trim() || audio.name
+}
+
+function compareAudioFiles(a: AudioFileEntry, b: AudioFileEntry): number {
+  if (audioSortMode.value === 'title') {
+    const byTitle = audioDisplayTitle(a).localeCompare(audioDisplayTitle(b))
+    if (byTitle !== 0) {
+      return byTitle
+    }
+  }
+
+  return a.name.localeCompare(b.name)
 }
 
 function resolveAudioPathLabel(audio: AudioFileEntry): string {
@@ -821,6 +837,16 @@ watch(
       </div>
 
       <div class="flex items-center gap-3 flex-wrap justify-end">
+        <label class="text-xs text-slate-300 inline-flex items-center gap-2">
+          Sort
+          <select
+            v-model="audioSortMode"
+            class="rounded-md border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100"
+          >
+            <option value="name">File name</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
         <div class="text-xs text-slate-300">
           {{ selectedAudioCount }} selected
           <span class="text-slate-400">(Ctrl/Cmd to toggle, Shift for range)</span>
