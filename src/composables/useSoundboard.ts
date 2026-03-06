@@ -652,10 +652,8 @@ export function useSoundboard(
       .map((track) => track.id)
 
     if (activeTrackIdsForAudio.length > 0) {
-      if (audio.metadata.infiniteLoop) {
-        for (const trackId of activeTrackIdsForAudio) {
-          stopTrack(trackId)
-        }
+      for (const trackId of activeTrackIdsForAudio) {
+        stopTrack(trackId)
       }
       return
     }
