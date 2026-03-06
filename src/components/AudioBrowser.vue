@@ -395,6 +395,20 @@ function clearAudioSelection(): void {
   lastSelectedAudioId.value = null
 }
 
+function onAudioBrowserBackgroundClick(event: MouseEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) {
+    return
+  }
+
+  if (target.closest('article, button, input, select, textarea, label')) {
+    return
+  }
+
+  clearAudioSelection()
+  closeAudioProperties()
+}
+
 function resolveSelectableAudioFiles(): AudioFileEntry[] {
   return isSearchActive.value ? filteredAudioFiles.value : visibleAudioFiles.value
 }
@@ -1034,6 +1048,7 @@ watch(
       @drop="onDrop"
       @dragover="onDragOver"
       @dragleave="onDragLeave"
+      @click="onAudioBrowserBackgroundClick"
       @contextmenu="onAudioFilesListContextMenu"
     >
       <div
