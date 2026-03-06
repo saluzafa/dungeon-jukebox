@@ -772,6 +772,10 @@ function playSelectedAsSuperTrack(): void {
 }
 
 function promptOpenRouterApiKey(): string | null {
+  if (openRouterApiKey.value.trim()) {
+    return openRouterApiKey.value.trim()
+  }
+
   const entered = window.prompt(
     'Enter your OpenRouter API key to auto-generate titles for displayed files.',
     openRouterApiKey.value,
