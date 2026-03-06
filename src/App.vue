@@ -257,7 +257,8 @@ onBeforeUnmount(() => {
               @play-audio="playAudio"
               @play-super-audio="(audioIds) => playSuperAudio(audioIds)"
               @auto-assign-titles="
-                (audioIds, apiKey) => autoAssignTitlesWithOpenRouter(audioIds, apiKey)
+                (audioIds, apiKey, directoryPath) =>
+                  autoAssignTitlesWithOpenRouter(audioIds, apiKey, directoryPath)
               "
               @update-current-directory-path="(directoryPath) => (currentDirectoryPath = directoryPath)"
               @update-meta="(audioId, patch) => updateAudioMeta(audioId, patch)"

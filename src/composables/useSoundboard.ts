@@ -1218,7 +1218,11 @@ export function useSoundboard(
     await moveAudioFilesToCollection([audioId], targetCollectionName)
   }
 
-  async function autoAssignTitlesWithOpenRouter(audioIds: string[], apiKey: string): Promise<void> {
+  async function autoAssignTitlesWithOpenRouter(
+    audioIds: string[],
+    apiKey: string,
+    currentDirectoryPath = '',
+  ): Promise<void> {
     const trimmedApiKey = apiKey.trim()
     if (!trimmedApiKey) {
       status.value = 'OpenRouter API key is required to auto assign titles.'
@@ -1241,6 +1245,7 @@ export function useSoundboard(
       const promptItems = targetAudio.map((audio) => ({
         id: audio.id,
         filename: audio.name,
+        relativePath: audio.relativePath,
         existingTitle: audio.metadata.title,
       }))
 
@@ -1270,9 +1275,11 @@ export function useSoundboard(
                 '- Keep original language when obvious.',
                 '- Remove file extensions.',
                 '- Keep titles concise (2-7 words).',
+                '- Avoid reusing words already implied by the current directory path.',
                 '- Output strict JSON object: {"titles":[{"id":"...","title":"..."}]}',
                 '- Include every provided id exactly once.',
                 '',
+                `currentDirectoryPath: ${currentDirectoryPath || '/'}`,
                 JSON.stringify(promptItems),
               ].join('\n'),
             },

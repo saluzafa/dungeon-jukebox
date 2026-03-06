@@ -20,7 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   playAudio: [audio: AudioFileEntry]
   playSuperAudio: [audioIds: string[]]
-  autoAssignTitles: [audioIds: string[], apiKey: string]
+  autoAssignTitles: [audioIds: string[], apiKey: string, currentDirectoryPath: string]
   updateMeta: [audioId: string, patch: Partial<AudioMeta>]
   setAudioIcon: [audioId: string, file: File | null]
   deleteAudio: [audioId: string]
@@ -812,7 +812,12 @@ function autoAssignDisplayedTitles(): void {
     return
   }
 
-  emit('autoAssignTitles', displayedAudio.map((audio) => audio.id), apiKey)
+  emit(
+    'autoAssignTitles',
+    displayedAudio.map((audio) => audio.id),
+    apiKey,
+    normalizePath(currentDirectoryPath.value),
+  )
 }
 
 onMounted(() => {

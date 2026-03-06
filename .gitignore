@@ -41,3 +41,6 @@ __screenshots__/
 # python
 .venv
 __pycache__
+
+# misc
+.env
