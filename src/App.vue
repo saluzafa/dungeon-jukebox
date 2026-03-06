@@ -30,7 +30,9 @@ const {
   setCollectionTitle,
   deleteCollection,
   playAudio,
+  playSuperAudio,
   stopTrack,
+  skipSuperTrack,
   stopAllTracks,
   updateTrackVolume,
   setGlobalVolume,
@@ -250,6 +252,7 @@ onBeforeUnmount(() => {
               :active-tracks="activeTracks"
               :current-directory-path="currentDirectoryPath"
               @play-audio="playAudio"
+              @play-super-audio="(audioIds) => playSuperAudio(audioIds)"
               @update-current-directory-path="(directoryPath) => (currentDirectoryPath = directoryPath)"
               @update-meta="(audioId, patch) => updateAudioMeta(audioId, patch)"
               @set-audio-icon="(audioId, file) => setAudioIcon(audioId, file)"
@@ -293,7 +296,9 @@ onBeforeUnmount(() => {
               :all-audio-files="allAudioFiles"
               :global-volume="globalVolume"
               @play-audio="playAudio"
+              @play-super-audio="(audioIds) => playSuperAudio(audioIds)"
               @stop-track="stopTrack"
+              @skip-super-track="(trackId) => skipSuperTrack(trackId)"
               @stop-all="stopAllTracks"
               @update-track-volume="(trackId, volume) => updateTrackVolume(trackId, volume)"
               @update-global-volume="(volume) => setGlobalVolume(volume)"

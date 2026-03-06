@@ -18,6 +18,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   playAudio: [audio: AudioFileEntry]
+  playSuperAudio: [audioIds: string[]]
   updateMeta: [audioId: string, patch: Partial<AudioMeta>]
   setAudioIcon: [audioId: string, file: File | null]
   deleteAudio: [audioId: string]
@@ -749,6 +750,24 @@ function playRandomDisplayedAudio(): void {
   emit('playAudio', randomAudio)
 }
 
+function playSelectedAsSuperTrack(): void {
+  if (selectedAudioCount.value < 2) {
+    return
+  }
+
+  const selectedIdSet = new Set(selectedAudioIds.value)
+  const orderedVisibleIds = resolveSelectableAudioFiles()
+    .map((audio) => audio.id)
+    .filter((audioId) => selectedIdSet.has(audioId))
+  const missingSelectedIds = selectedAudioIds.value.filter((audioId) => !orderedVisibleIds.includes(audioId))
+  const orderedAudioIds = [...orderedVisibleIds, ...missingSelectedIds]
+  if (orderedAudioIds.length < 2) {
+    return
+  }
+
+  emit('playSuperAudio', orderedAudioIds)
+}
+
 onMounted(() => {
   window.addEventListener('click', closeContextMenus)
   window.addEventListener('resize', closeContextMenus)
@@ -858,6 +877,14 @@ watch(
           @click="clearAudioSelection"
         >
           Clear Selection
+        </button>
+        <button
+          type="button"
+          class="rounded-md border border-cyan-500/60 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
+          :disabled="selectedAudioCount < 2"
+          @click="playSelectedAsSuperTrack"
+        >
+          Play as Super Track
         </button>
         <input
           v-model="newDirectoryName"

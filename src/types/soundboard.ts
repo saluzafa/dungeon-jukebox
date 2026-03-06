@@ -36,6 +36,10 @@ export interface ActiveTrack {
   audioId: string
   title: string
   category: AudioCategory
+  isSuperTrack?: boolean
+  superTrackPosition?: number
+  superTrackTotal?: number
+  superTrackCurrentTitle?: string | null
   volume: number
   currentSeconds: number
   totalSeconds: number

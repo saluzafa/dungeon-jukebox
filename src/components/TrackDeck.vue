@@ -10,7 +10,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   playAudio: [audio: AudioFileEntry]
+  playSuperAudio: [audioIds: string[]]
   stopTrack: [trackId: string]
+  skipSuperTrack: [trackId: string]
   stopAll: []
   updateTrackVolume: [trackId: string, volume: number]
   updateGlobalVolume: [volume: number]
@@ -22,7 +24,28 @@ function onDrop(event: DragEvent): void {
   event.preventDefault()
   isDropOver.value = false
 
-  const audioId = event.dataTransfer?.getData('application/x-audio-id')
+  const rawAudioIds = event.dataTransfer?.getData('application/x-audio-ids') ?? ''
+  const audioIds = (() => {
+    if (!rawAudioIds) {
+      return [] as string[]
+    }
+    try {
+      const parsed = JSON.parse(rawAudioIds)
+      if (!Array.isArray(parsed)) {
+        return [] as string[]
+      }
+      return parsed.filter((audioId): audioId is string => typeof audioId === 'string' && audioId.length > 0)
+    } catch {
+      return [] as string[]
+    }
+  })()
+
+  if (audioIds.length > 1) {
+    emit('playSuperAudio', audioIds)
+    return
+  }
+
+  const audioId = audioIds[0] ?? event.dataTransfer?.getData('application/x-audio-id')
   if (!audioId) {
     return
   }
@@ -108,6 +131,13 @@ function formatSeconds(seconds: number): number {
           <div>
             <div class="text-sm text-slate-100 truncate w-[80%] block">{{ track.title }}</div>
             <div class="text-[11px] uppercase text-slate-400">{{ track.category }}</div>
+            <div
+              v-if="track.isSuperTrack"
+              class="text-[11px] text-cyan-300 mt-1"
+            >
+              {{ track.superTrackPosition ?? 1 }}/{{ track.superTrackTotal ?? 1 }}:
+              {{ track.superTrackCurrentTitle ?? 'Loading…' }}
+            </div>
             <div class="text-[11px] text-slate-300 mt-1">
               {{ formatSeconds(track.currentSeconds) }}s / {{ formatSeconds(track.totalSeconds) }}s
             </div>
@@ -128,9 +158,18 @@ function formatSeconds(seconds: number): number {
             @input="(event) => onTrackVolumeInput(track.id, event)"
           />
         </div>
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-2">
           <button
-            class="block w-full px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-sm text-slate-100"
+            v-if="track.isSuperTrack"
+            class="px-2 py-1 rounded-md bg-cyan-600/80 hover:bg-cyan-500 text-sm text-slate-100"
+            :disabled="(track.superTrackPosition ?? 1) >= (track.superTrackTotal ?? 1)"
+            @click="emit('skipSuperTrack', track.id)"
+          >
+            Next Track
+          </button>
+          <button
+            class="block px-2 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-sm text-slate-100"
+            :class="track.isSuperTrack ? 'flex-1' : 'w-full'"
             @click="emit('stopTrack', track.id)"
           >
             Stop

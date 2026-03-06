@@ -241,6 +241,7 @@ function createTrackId(audioId: string): string {
 
 export function useSoundboard() {
   let webAudioContext: AudioContext | null = null
+  const superTrackSkippers = new Map<string, () => void>()
   const rootHandle = ref<FileSystemDirectoryHandle | null>(null)
   const collections = ref<CollectionEntry[]>([])
   const selectedCollectionName = ref<string | null>(null)
@@ -269,6 +270,13 @@ export function useSoundboard() {
       return 100
     }
     return Math.max(0, Math.min(100, Math.round(volume)))
+  }
+
+  function getTrackDisplayTitle(audio: AudioFileEntry): string {
+    return `${
+      collections.value.find((collection) => collection.name === audio.collectionName)?.title ??
+      audio.collectionName
+    } / ${getAudioDisplayTitle(audio)}`
   }
 
   function applyTrackOutputVolume(track: ActiveTrack): void {
@@ -942,6 +950,7 @@ export function useSoundboard() {
       return
     }
 
+    superTrackSkippers.delete(trackId)
     track.audioElement?.pause()
     track.cleanup()
     activeTracks.value = activeTracks.value.filter((item) => item.id !== trackId)
@@ -965,6 +974,14 @@ export function useSoundboard() {
 
   function setGlobalVolume(volume: number): void {
     globalVolume.value = clampVolume(volume)
+  }
+
+  function skipSuperTrack(trackId: string): void {
+    const skip = superTrackSkippers.get(trackId)
+    if (!skip) {
+      return
+    }
+    skip()
   }
 
   async function playAudio(audio: AudioFileEntry): Promise<void> {
@@ -1110,11 +1127,9 @@ export function useSoundboard() {
           activeTracks.value.push({
             id: trackId,
             audioId: audio.id,
-            title: `${
-              collections.value.find((collection) => collection.name === audio.collectionName)?.title ??
-              audio.collectionName
-            } / ${getAudioDisplayTitle(audio)}`,
+            title: getTrackDisplayTitle(audio),
             category: audio.metadata.category,
+            isSuperTrack: false,
             volume: trackVolume,
             currentSeconds: loopStart,
             totalSeconds: loopEnd,
@@ -1185,11 +1200,9 @@ export function useSoundboard() {
     activeTracks.value.push({
       id: trackId,
       audioId: audio.id,
-      title: `${
-        collections.value.find((collection) => collection.name === audio.collectionName)?.title ??
-        audio.collectionName
-      } / ${getAudioDisplayTitle(audio)}`,
+      title: getTrackDisplayTitle(audio),
       category: audio.metadata.category,
+      isSuperTrack: false,
       volume: trackVolume,
       currentSeconds: boundedStart,
       totalSeconds: 0,
@@ -1205,6 +1218,191 @@ export function useSoundboard() {
     if (createdTrack) {
       applyTrackOutputVolume(createdTrack)
     }
+  }
+
+  async function playSuperAudio(audioIds: string[]): Promise<void> {
+    const uniqueAudioIds = [...new Set(audioIds)]
+    const queuedAudio = uniqueAudioIds
+      .map((audioId) => allAudioFiles.value.find((entry) => entry.id === audioId))
+      .filter((audio): audio is AudioFileEntry => Boolean(audio))
+
+    if (queuedAudio.length === 0) {
+      return
+    }
+
+    if (queuedAudio.length === 1) {
+      const onlyAudio = queuedAudio[0]
+      if (onlyAudio) {
+        await playAudio(onlyAudio)
+      }
+      return
+    }
+
+    const firstAudio = queuedAudio[0]
+    if (!firstAudio) {
+      return
+    }
+
+    const trackId = createTrackId(`super-track-${firstAudio.id}`)
+    const trackVolume = clampVolume(100)
+    const trackTitle = `Super Audio Track (${queuedAudio.length} tracks)`
+    let queueIndex = 0
+    let currentElement: HTMLAudioElement | null = null
+    let currentSourceUrl: string | null = null
+    let disposed = false
+    let transitionToken = 0
+
+    const applySuperTrackState = (
+      currentAudio: AudioFileEntry | null,
+      currentSeconds: number,
+      totalSeconds: number,
+    ): void => {
+      const track = activeTracks.value.find((item) => item.id === trackId)
+      if (!track) {
+        return
+      }
+
+      track.audioId = currentAudio?.id ?? track.audioId
+      track.currentSeconds = Math.max(0, currentSeconds)
+      track.totalSeconds = Math.max(0, totalSeconds)
+      track.superTrackPosition = Math.min(queueIndex + 1, queuedAudio.length)
+      track.superTrackTotal = queuedAudio.length
+      track.superTrackCurrentTitle = currentAudio ? getTrackDisplayTitle(currentAudio) : null
+      track.audioElement = currentElement
+      applyTrackOutputVolume(track)
+    }
+
+    const cleanupCurrentElement = (): void => {
+      if (currentElement) {
+        currentElement.onloadedmetadata = null
+        currentElement.ontimeupdate = null
+        currentElement.onended = null
+        currentElement.onerror = null
+        currentElement.pause()
+      }
+      currentElement = null
+      if (currentSourceUrl) {
+        URL.revokeObjectURL(currentSourceUrl)
+      }
+      currentSourceUrl = null
+    }
+
+    const cleanup = (): void => {
+      disposed = true
+      superTrackSkippers.delete(trackId)
+      cleanupCurrentElement()
+    }
+
+    const playNextQueueItem = async (nextIndex: number): Promise<void> => {
+      if (disposed) {
+        return
+      }
+
+      if (nextIndex >= queuedAudio.length) {
+        stopTrack(trackId)
+        return
+      }
+
+      queueIndex = nextIndex
+      transitionToken += 1
+      const currentToken = transitionToken
+      const nextAudio = queuedAudio[queueIndex]
+      if (!nextAudio) {
+        stopTrack(trackId)
+        return
+      }
+
+      cleanupCurrentElement()
+
+      try {
+        const file = await nextAudio.fileHandle.getFile()
+        if (disposed || currentToken !== transitionToken) {
+          return
+        }
+
+        const sourceUrl = URL.createObjectURL(file)
+        const element = new Audio(sourceUrl)
+        currentElement = element
+        currentSourceUrl = sourceUrl
+
+        const start = Math.max(0, nextAudio.metadata.trimStart ?? 0)
+        const end = nextAudio.metadata.trimEnd
+
+        element.onloadedmetadata = () => {
+          if (disposed || currentToken !== transitionToken) {
+            return
+          }
+          element.currentTime = Math.min(start, element.duration || start)
+          applySuperTrackState(nextAudio, element.currentTime, Number.isFinite(element.duration) ? element.duration : 0)
+          void element.play()
+        }
+
+        element.ontimeupdate = () => {
+          if (disposed || currentToken !== transitionToken) {
+            return
+          }
+          applySuperTrackState(nextAudio, element.currentTime, Number.isFinite(element.duration) ? element.duration : 0)
+          if (end === null || end === undefined || element.currentTime < end) {
+            return
+          }
+          void playNextQueueItem(queueIndex + 1)
+        }
+
+        element.onended = () => {
+          if (disposed || currentToken !== transitionToken) {
+            return
+          }
+          void playNextQueueItem(queueIndex + 1)
+        }
+
+        element.onerror = () => {
+          if (disposed || currentToken !== transitionToken) {
+            return
+          }
+          status.value = `Could not play ${getAudioDisplayTitle(nextAudio)} in Super Audio Track. Skipped.`
+          void playNextQueueItem(queueIndex + 1)
+        }
+
+        applySuperTrackState(nextAudio, start, 0)
+      } catch {
+        status.value = `Could not load ${getAudioDisplayTitle(nextAudio)} in Super Audio Track. Skipped.`
+        void playNextQueueItem(queueIndex + 1)
+      }
+    }
+
+    superTrackSkippers.set(trackId, () => {
+      if (disposed) {
+        return
+      }
+      void playNextQueueItem(queueIndex + 1)
+    })
+
+    activeTracks.value.push({
+      id: trackId,
+      audioId: firstAudio.id,
+      title: trackTitle,
+      category: 'music',
+      isSuperTrack: true,
+      superTrackPosition: 1,
+      superTrackTotal: queuedAudio.length,
+      superTrackCurrentTitle: getTrackDisplayTitle(firstAudio),
+      volume: trackVolume,
+      currentSeconds: 0,
+      totalSeconds: 0,
+      audioElement: null,
+      sourceUrl: null,
+      outputGainNode: null,
+      timingIntervalId: null,
+      startedAt: Date.now(),
+      cleanup,
+    })
+
+    const createdTrack = activeTracks.value.find((track) => track.id === trackId)
+    if (createdTrack) {
+      applyTrackOutputVolume(createdTrack)
+    }
+
+    await playNextQueueItem(0)
   }
 
   async function updateAudioMeta(
@@ -1515,7 +1713,9 @@ export function useSoundboard() {
     setCollectionTitle,
     deleteCollection,
     playAudio,
+    playSuperAudio,
     stopTrack,
+    skipSuperTrack,
     stopAllTracks,
     updateTrackVolume,
     setGlobalVolume,
