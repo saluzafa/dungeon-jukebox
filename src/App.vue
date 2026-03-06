@@ -16,6 +16,7 @@ const {
   status,
   loading,
   restoring,
+  autoTitling,
   isFileSystemAccessSupported,
   connectFolder,
   tryRestoreLastFolder,
@@ -41,6 +42,7 @@ const {
   deleteAudioFile,
   moveAudioFilesToDirectory,
   moveAudioFilesToCollection,
+  autoAssignTitlesWithOpenRouter,
   resolveCollectionIconUrl,
   resolveAudioIconUrl,
 } = useSoundboard()
@@ -251,8 +253,12 @@ onBeforeUnmount(() => {
               :audio-icon-urls="audioIconUrls"
               :active-tracks="activeTracks"
               :current-directory-path="currentDirectoryPath"
+              :is-auto-assigning-titles="autoTitling"
               @play-audio="playAudio"
               @play-super-audio="(audioIds) => playSuperAudio(audioIds)"
+              @auto-assign-titles="
+                (audioIds, apiKey) => autoAssignTitlesWithOpenRouter(audioIds, apiKey)
+              "
               @update-current-directory-path="(directoryPath) => (currentDirectoryPath = directoryPath)"
               @update-meta="(audioId, patch) => updateAudioMeta(audioId, patch)"
               @set-audio-icon="(audioId, file) => setAudioIcon(audioId, file)"

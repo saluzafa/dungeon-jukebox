@@ -31,6 +31,93 @@ function getAudioDisplayTitle(audio: AudioFileEntry): string {
   return audio.metadata.title?.trim() || audio.name
 }
 
+function filenameToFallbackTitle(name: string): string {
+  const withoutExtension = name.replace(/\.[^./\\]+$/, '')
+  const normalized = withoutExtension
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return normalized || name
+}
+
+function sanitizeGeneratedTitle(raw: string, fallback: string): string {
+  const strippedQuotes = raw.replace(/^["']+|["']+$/g, '')
+  const normalized = strippedQuotes.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return fallback
+  }
+  return normalized.slice(0, 120)
+}
+
+function extractAssistantText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') {
+          return part
+        }
+        if (
+          part &&
+          typeof part === 'object' &&
+          'text' in part &&
+          typeof (part as { text: unknown }).text === 'string'
+        ) {
+          return (part as { text: string }).text
+        }
+        return ''
+      })
+      .join('\n')
+  }
+  return ''
+}
+
+function parseGeneratedTitlesByAudioId(content: string): Map<string, string> {
+  const tryParse = (raw: string): unknown => {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+
+  let parsed = tryParse(content)
+  if (!parsed) {
+    const firstBrace = content.indexOf('{')
+    const lastBrace = content.lastIndexOf('}')
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      parsed = tryParse(content.slice(firstBrace, lastBrace + 1))
+    }
+  }
+
+  const entries = (() => {
+    if (Array.isArray(parsed)) {
+      return parsed
+    }
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { titles?: unknown }).titles)) {
+      return (parsed as { titles: unknown[] }).titles
+    }
+    return []
+  })()
+
+  const byId = new Map<string, string>()
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object') {
+      continue
+    }
+    const id = (entry as { id?: unknown }).id
+    const title = (entry as { title?: unknown }).title
+    if (typeof id !== 'string' || typeof title !== 'string') {
+      continue
+    }
+    byId.set(id, title)
+  }
+
+  return byId
+}
+
 function createTrackId(audioId: string): string {
   return `${audioId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -50,6 +137,7 @@ export function useSoundboard(
   const globalVolume = ref(100)
   const loading = ref(false)
   const restoring = ref(false)
+  const autoTitling = ref(false)
   const status = ref<string>('Connect a local folder to start.')
 
   const isFileSystemAccessSupported = storageAdapter.isSupported()
@@ -1130,6 +1218,105 @@ export function useSoundboard(
     await moveAudioFilesToCollection([audioId], targetCollectionName)
   }
 
+  async function autoAssignTitlesWithOpenRouter(audioIds: string[], apiKey: string): Promise<void> {
+    const trimmedApiKey = apiKey.trim()
+    if (!trimmedApiKey) {
+      status.value = 'OpenRouter API key is required to auto assign titles.'
+      return
+    }
+
+    const targetAudio = [...new Set(audioIds)]
+      .map((audioId) => allAudioFiles.value.find((entry) => entry.id === audioId))
+      .filter((audio): audio is AudioFileEntry => Boolean(audio))
+
+    if (targetAudio.length === 0) {
+      status.value = 'No displayed audio files available for title generation.'
+      return
+    }
+
+    autoTitling.value = true
+    status.value = `Generating titles for ${targetAudio.length} displayed audio files...`
+
+    try {
+      const promptItems = targetAudio.map((audio) => ({
+        id: audio.id,
+        filename: audio.name,
+        existingTitle: audio.metadata.title,
+      }))
+
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${trimmedApiKey}`,
+          'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'http://localhost',
+          'X-Title': 'Dungeon Jukebox',
+        },
+        body: JSON.stringify({
+          model: 'openai/gpt-4.1-mini',
+          temperature: 0.2,
+          max_tokens: 800,
+          messages: [
+            {
+              role: 'system',
+              content:
+                'You generate concise audio track titles from filenames. Return JSON only.',
+            },
+            {
+              role: 'user',
+              content: [
+                'Generate a short human-friendly title for each filename.',
+                'Requirements:',
+                '- Keep original language when obvious.',
+                '- Remove file extensions.',
+                '- Keep titles concise (2-7 words).',
+                '- Output strict JSON object: {"titles":[{"id":"...","title":"..."}]}',
+                '- Include every provided id exactly once.',
+                '',
+                JSON.stringify(promptItems),
+              ].join('\n'),
+            },
+          ],
+        }),
+      })
+
+      if (!response.ok) {
+        const errorBody = await response.text()
+        const details = errorBody.trim()
+        throw new Error(
+          `OpenRouter request failed (${response.status}${details ? `: ${details.slice(0, 180)}` : ''})`,
+        )
+      }
+
+      const completion = await response.json()
+      const assistantText = extractAssistantText(
+        (completion as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content,
+      )
+      const generatedById = parseGeneratedTitlesByAudioId(assistantText)
+
+      let updatedCount = 0
+      for (const audio of targetAudio) {
+        const fallbackTitle = filenameToFallbackTitle(audio.name)
+        const generatedTitle = generatedById.get(audio.id)
+        const nextTitle = sanitizeGeneratedTitle(generatedTitle ?? fallbackTitle, fallbackTitle)
+        if ((audio.metadata.title?.trim() ?? '') === nextTitle) {
+          continue
+        }
+        audio.metadata = await storageAdapter.updateAudioMeta(audio, { title: nextTitle })
+        updatedCount += 1
+      }
+
+      status.value = `Auto-assigned titles for ${updatedCount} of ${targetAudio.length} displayed files.`
+    } catch (error) {
+      console.error(error)
+      status.value = error instanceof Error
+        ? `Auto title generation failed: ${error.message}`
+        : 'Auto title generation failed.'
+    } finally {
+      autoTitling.value = false
+    }
+  }
+
   async function resolveCollectionIconUrl(collection: CollectionEntry): Promise<string | null> {
     return storageAdapter.resolveCollectionIconUrl(collection)
   }
@@ -1163,6 +1350,7 @@ export function useSoundboard(
     status,
     loading,
     restoring,
+    autoTitling,
     isFileSystemAccessSupported,
     connectFolder,
     tryRestoreLastFolder,
@@ -1190,6 +1378,7 @@ export function useSoundboard(
     moveAudioToDirectory,
     moveAudioFilesToCollection,
     moveAudioToCollection,
+    autoAssignTitlesWithOpenRouter,
     resolveCollectionIconUrl,
     resolveAudioIconUrl,
   }

@@ -14,11 +14,13 @@ const props = defineProps<{
   audioIconUrls: Record<string, string>
   activeTracks: ActiveTrack[]
   currentDirectoryPath: string
+  isAutoAssigningTitles: boolean
 }>()
 
 const emit = defineEmits<{
   playAudio: [audio: AudioFileEntry]
   playSuperAudio: [audioIds: string[]]
+  autoAssignTitles: [audioIds: string[], apiKey: string]
   updateMeta: [audioId: string, patch: Partial<AudioMeta>]
   setAudioIcon: [audioId: string, file: File | null]
   deleteAudio: [audioId: string]
@@ -42,6 +44,7 @@ const selectedAudioIds = ref<string[]>([])
 const lastSelectedAudioId = ref<string | null>(null)
 const searchQuery = ref('')
 const audioSortMode = ref<'name' | 'title'>('name')
+const openRouterApiKey = ref('')
 const isDropOver = ref(false)
 const dragOverDirectoryPath = ref<string | null>(null)
 const currentDirectoryPath = ref('')
@@ -768,6 +771,50 @@ function playSelectedAsSuperTrack(): void {
   emit('playSuperAudio', orderedAudioIds)
 }
 
+function promptOpenRouterApiKey(): string | null {
+  const entered = window.prompt(
+    'Enter your OpenRouter API key to auto-generate titles for displayed files.',
+    openRouterApiKey.value,
+  )
+  if (entered === null) {
+    return null
+  }
+
+  const trimmed = entered.trim()
+  if (!trimmed) {
+    window.alert('OpenRouter API key is required.')
+    return null
+  }
+
+  openRouterApiKey.value = trimmed
+  return trimmed
+}
+
+function autoAssignDisplayedTitles(): void {
+  if (props.isAutoAssigningTitles) {
+    return
+  }
+
+  const displayedAudio = currentlyDisplayedAudioFiles.value
+  if (displayedAudio.length === 0) {
+    return
+  }
+
+  const apiKey = promptOpenRouterApiKey()
+  if (!apiKey) {
+    return
+  }
+
+  const shouldProceed = window.confirm(
+    `Generate titles for ${displayedAudio.length} currently displayed audio files?\n\nExisting custom titles may be overwritten.`,
+  )
+  if (!shouldProceed) {
+    return
+  }
+
+  emit('autoAssignTitles', displayedAudio.map((audio) => audio.id), apiKey)
+}
+
 onMounted(() => {
   window.addEventListener('click', closeContextMenus)
   window.addEventListener('resize', closeContextMenus)
@@ -821,6 +868,14 @@ watch(
         @click="playRandomDisplayedAudio"
       >
         Play Random
+      </button>
+      <button
+        type="button"
+        class="px-3 py-2 rounded-lg border border-sky-400/70 bg-sky-400/10 hover:bg-sky-400/20 text-sky-200 text-sm font-semibold disabled:opacity-50"
+        :disabled="currentlyDisplayedAudioFiles.length === 0 || props.isAutoAssigningTitles"
+        @click="autoAssignDisplayedTitles"
+      >
+        {{ props.isAutoAssigningTitles ? 'Generating Titles...' : 'Auto Assign Titles (AI)' }}
       </button>
     </header>
 
