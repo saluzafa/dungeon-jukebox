@@ -22,6 +22,7 @@ const emit = defineEmits<{
   playSuperAudio: [audioIds: string[]]
   autoAssignTitles: [audioIds: string[], apiKey: string, currentDirectoryPath: string]
   updateMeta: [audioId: string, patch: Partial<AudioMeta>]
+  updateMetaBatch: [audioIds: string[], patch: Partial<AudioMeta>]
   setAudioIcon: [audioId: string, file: File | null]
   deleteAudio: [audioId: string]
   importFiles: [collectionName: string, files: File[], targetDirectoryPath: string]
@@ -153,7 +154,22 @@ const currentlyDisplayedAudioFiles = computed<AudioFileEntry[]>(() =>
 
 const selectedAudio = computed(() => allAudioFiles.value.find((audio) => audio.id === selectedAudioId.value) ?? null)
 const selectedAudioIdSet = computed(() => new Set(selectedAudioIds.value))
+const selectedAudioFiles = computed(() => {
+  const selectedIdSet = selectedAudioIdSet.value
+  return allAudioFiles.value.filter((audio) => selectedIdSet.has(audio.id))
+})
 const selectedAudioCount = computed(() => selectedAudioIds.value.length)
+const bulkSelectionCategoryValue = computed(() => {
+  if (selectedAudioFiles.value.length === 0) {
+    return ''
+  }
+  const firstCategory = selectedAudioFiles.value[0]?.metadata.category
+  if (!firstCategory) {
+    return ''
+  }
+  const hasMixedCategories = selectedAudioFiles.value.some((audio) => audio.metadata.category !== firstCategory)
+  return hasMixedCategories ? '' : firstCategory
+})
 const playingAudioIds = computed(() => new Set(props.activeTracks.map((track) => track.audioId)))
 const hasVisibleItems = computed(() => {
   if (isSearchActive.value) {
@@ -243,6 +259,16 @@ function updateSelectedAudioCategory(value: string): void {
     return
   }
   updateSelectedAudioMeta({ category: value })
+}
+
+function updateSelectionCategory(value: string): void {
+  if (value !== 'music' && value !== 'effect' && value !== 'sound') {
+    return
+  }
+  if (selectedAudioIds.value.length === 0) {
+    return
+  }
+  emit('updateMetaBatch', [...selectedAudioIds.value], { category: value })
 }
 
 function onSelectedAudioIconChange(event: Event): void {
@@ -950,6 +976,23 @@ watch(
         >
           Play as Super Track
         </button>
+        <!-- SEP -->
+        <label class="text-xs text-slate-300 inline-flex items-center gap-2">
+          Set category
+          <select
+            class="rounded-md border border-slate-600 bg-slate-900 px-2 py-1 text-xs text-slate-100 disabled:opacity-50"
+            :value="bulkSelectionCategoryValue"
+            :disabled="selectedAudioCount === 0"
+            @change="updateSelectionCategory(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="" disabled>
+              {{ selectedAudioCount > 1 ? 'mixed' : 'Select category' }}
+            </option>
+            <option value="music">music</option>
+            <option value="effect">effect</option>
+            <option value="sound">sound</option>
+          </select>
+        </label>
         <input
           v-model="newDirectoryName"
           type="text"

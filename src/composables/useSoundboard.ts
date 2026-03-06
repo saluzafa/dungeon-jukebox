@@ -1077,6 +1077,32 @@ export function useSoundboard(
     audio.metadata = await storageAdapter.updateAudioMeta(audio, patch)
   }
 
+  async function updateAudioMetaBatch(
+    audioIds: string[],
+    patch: Partial<AudioMeta>,
+  ): Promise<void> {
+    if (audioIds.length === 0) {
+      return
+    }
+
+    const uniqueIds = [...new Set(audioIds)]
+    const targetAudio = uniqueIds
+      .map((audioId) => allAudioFiles.value.find((entry) => entry.id === audioId))
+      .filter((audio): audio is AudioFileEntry => Boolean(audio))
+
+    if (targetAudio.length === 0) {
+      return
+    }
+
+    for (const audio of targetAudio) {
+      audio.metadata = await storageAdapter.updateAudioMeta(audio, patch)
+    }
+
+    if (patch.category) {
+      status.value = `Updated category for ${targetAudio.length} audio file${targetAudio.length === 1 ? '' : 's'}.`
+    }
+  }
+
   async function setAudioIcon(audioId: string, iconFile: File | null): Promise<void> {
     const audio = allAudioFiles.value.find((entry) => entry.id === audioId)
     if (!audio) {
@@ -1377,6 +1403,7 @@ export function useSoundboard(
     updateTrackVolume,
     setGlobalVolume,
     updateAudioMeta,
+    updateAudioMetaBatch,
     setAudioIcon,
     deleteAudioFile,
     moveAudioFilesToDirectory,

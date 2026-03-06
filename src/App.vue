@@ -38,6 +38,7 @@ const {
   updateTrackVolume,
   setGlobalVolume,
   updateAudioMeta,
+  updateAudioMetaBatch,
   setAudioIcon,
   deleteAudioFile,
   moveAudioFilesToDirectory,
@@ -262,6 +263,7 @@ onBeforeUnmount(() => {
               "
               @update-current-directory-path="(directoryPath) => (currentDirectoryPath = directoryPath)"
               @update-meta="(audioId, patch) => updateAudioMeta(audioId, patch)"
+              @update-meta-batch="(audioIds, patch) => updateAudioMetaBatch(audioIds, patch)"
               @set-audio-icon="(audioId, file) => setAudioIcon(audioId, file)"
               @delete-audio="(audioId) => deleteAudioFile(audioId)"
               @import-files="(collectionName, files, targetDirectoryPath) => importAudioFiles(collectionName, files, targetDirectoryPath)"
