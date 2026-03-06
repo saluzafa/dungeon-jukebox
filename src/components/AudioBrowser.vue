@@ -45,6 +45,7 @@ const selectedAudioIds = ref<string[]>([])
 const lastSelectedAudioId = ref<string | null>(null)
 const searchQuery = ref('')
 const audioSortMode = ref<'name' | 'title'>('name')
+const OPENROUTER_API_KEY_STORAGE_KEY = 'dungeon-jukebox.openrouter-api-key'
 const openRouterApiKey = ref('')
 const isDropOver = ref(false)
 const dragOverDirectoryPath = ref<string | null>(null)
@@ -825,6 +826,7 @@ function promptOpenRouterApiKey(): string | null {
   }
 
   openRouterApiKey.value = trimmed
+  window.localStorage.setItem(OPENROUTER_API_KEY_STORAGE_KEY, trimmed)
   return trimmed
 }
 
@@ -859,6 +861,11 @@ function autoAssignDisplayedTitles(): void {
 }
 
 onMounted(() => {
+  const savedApiKey = window.localStorage.getItem(OPENROUTER_API_KEY_STORAGE_KEY)
+  if (savedApiKey) {
+    openRouterApiKey.value = savedApiKey
+  }
+
   window.addEventListener('click', closeContextMenus)
   window.addEventListener('resize', closeContextMenus)
   window.addEventListener('scroll', closeContextMenus, true)
