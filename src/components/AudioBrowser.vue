@@ -159,6 +159,9 @@ const selectedAudioFiles = computed(() => {
   return allAudioFiles.value.filter((audio) => selectedIdSet.has(audio.id))
 })
 const selectedAudioCount = computed(() => selectedAudioIds.value.length)
+const canPlayAllAsSuperTrack = computed(
+  () => selectedAudioCount.value >= 2 || currentlyDisplayedAudioFiles.value.length >= 2,
+)
 const bulkSelectionCategoryValue = computed(() => {
   if (selectedAudioFiles.value.length === 0) {
     return ''
@@ -780,21 +783,26 @@ function playRandomDisplayedAudio(): void {
 }
 
 function playSelectedAsSuperTrack(): void {
-  if (selectedAudioCount.value < 2) {
+  if (selectedAudioCount.value >= 2) {
+    const selectedIdSet = new Set(selectedAudioIds.value)
+    const orderedVisibleIds = resolveSelectableAudioFiles()
+      .map((audio) => audio.id)
+      .filter((audioId) => selectedIdSet.has(audioId))
+    const missingSelectedIds = selectedAudioIds.value.filter((audioId) => !orderedVisibleIds.includes(audioId))
+    const orderedAudioIds = [...orderedVisibleIds, ...missingSelectedIds]
+    if (orderedAudioIds.length < 2) {
+      return
+    }
+
+    emit('playSuperAudio', orderedAudioIds)
     return
   }
 
-  const selectedIdSet = new Set(selectedAudioIds.value)
-  const orderedVisibleIds = resolveSelectableAudioFiles()
-    .map((audio) => audio.id)
-    .filter((audioId) => selectedIdSet.has(audioId))
-  const missingSelectedIds = selectedAudioIds.value.filter((audioId) => !orderedVisibleIds.includes(audioId))
-  const orderedAudioIds = [...orderedVisibleIds, ...missingSelectedIds]
-  if (orderedAudioIds.length < 2) {
+  const displayedAudioIds = currentlyDisplayedAudioFiles.value.map((audio) => audio.id)
+  if (displayedAudioIds.length < 2) {
     return
   }
-
-  emit('playSuperAudio', orderedAudioIds)
+  emit('playSuperAudio', displayedAudioIds)
 }
 
 function promptOpenRouterApiKey(): string | null {
@@ -971,10 +979,10 @@ watch(
         <button
           type="button"
           class="rounded-md border border-cyan-500/60 bg-cyan-500/10 px-2 py-1 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
-          :disabled="selectedAudioCount < 2"
+          :disabled="!canPlayAllAsSuperTrack"
           @click="playSelectedAsSuperTrack"
         >
-          Play as Super Track
+          Play all as Super Track
         </button>
         <!-- SEP -->
         <label class="text-xs text-slate-300 inline-flex items-center gap-2">
