@@ -656,6 +656,14 @@ export function useSoundboard(
         stopTrack(trackId)
       }
       return
+    } else if (audio.metadata.category == "music") {
+      const activeMusicTrackIds = activeTracks.value
+        .filter((track) => track.category === "music")
+        .map((track) => track.id);
+
+      for (const trackId of activeMusicTrackIds) {
+        stopTrack(trackId)
+      }
     }
 
     const file = await storageAdapter.getAudioFile(audio)
