@@ -27,7 +27,7 @@ interface FsAudioRef {
 const defaultAudioMeta: AudioMeta = {
   title: null,
   iconImage: null,
-  category: 'sound',
+  category: 'music',
   infiniteLoop: false,
   trimStart: null,
   trimEnd: null,
