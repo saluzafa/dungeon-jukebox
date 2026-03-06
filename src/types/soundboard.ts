@@ -15,20 +15,18 @@ export interface AudioFileEntry {
   name: string
   relativePath: string
   collectionName: string
-  fileHandle: FileSystemFileHandle
-  audioDirHandle: FileSystemDirectoryHandle
   metadataFileName: string
   metadata: AudioMeta
+  storageRef: unknown
 }
 
 export interface CollectionEntry {
   name: string
   title: string
   iconImage: string | null
-  dirHandle: FileSystemDirectoryHandle
-  audioDirHandle: FileSystemDirectoryHandle
   directoryPaths: string[]
   audioFiles: AudioFileEntry[]
+  storageRef: unknown
 }
 
 export interface ActiveTrack {

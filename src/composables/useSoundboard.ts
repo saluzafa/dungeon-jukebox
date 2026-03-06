@@ -1,33 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { ActiveTrack, AudioCategory, AudioFileEntry, AudioMeta, CollectionEntry } from '@/types/soundboard'
-import { loadFolderHandle, saveFolderHandle } from '@/utils/folderHandleStore'
-
-const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac'])
-const COLLECTION_META_FILE = 'collection.json'
-
-interface CollectionMeta {
-  title?: string | null
-  iconImage?: string | null
-}
-
-const defaultAudioMeta: AudioMeta = {
-  title: null,
-  iconImage: null,
-  category: 'sound',
-  infiniteLoop: false,
-  trimStart: null,
-  trimEnd: null,
-  volume: 100,
-}
-
-function extname(fileName: string): string {
-  const dotIndex = fileName.lastIndexOf('.')
-  return dotIndex >= 0 ? fileName.slice(dotIndex).toLowerCase() : ''
-}
-
-function metadataFileNameForAudio(fileName: string): string {
-  return `${fileName}.json`
-}
+import type { ActiveTrack, AudioFileEntry, AudioMeta, CollectionEntry } from '@/types/soundboard'
+import { createFileSystemStorageAdapter } from '@/storage/fileSystemStorageAdapter'
+import type { StorageAdapter, StorageRoot } from '@/storage/storageAdapter'
 
 function normalizeRelativePath(path: string | null | undefined): string {
   if (!path) {
@@ -53,196 +27,23 @@ function joinRelativePath(parentPath: string, childName: string): string {
   return `${normalizedParent}/${normalizedChild}`
 }
 
-function sanitizeAudioMeta(meta: Partial<AudioMeta> | null | undefined): AudioMeta {
-  const category: AudioCategory =
-    meta?.category === 'music' || meta?.category === 'effect' || meta?.category === 'sound'
-      ? meta.category
-      : defaultAudioMeta.category
-
-  return {
-    title: typeof meta?.title === 'string' && meta.title.trim().length > 0 ? meta.title : null,
-    iconImage: typeof meta?.iconImage === 'string' ? meta.iconImage : null,
-    category,
-    infiniteLoop: Boolean(meta?.infiniteLoop),
-    trimStart: typeof meta?.trimStart === 'number' ? Math.max(0, meta.trimStart) : null,
-    trimEnd: typeof meta?.trimEnd === 'number' ? Math.max(0, meta.trimEnd) : null,
-    volume:
-      typeof meta?.volume === 'number' && Number.isFinite(meta.volume)
-        ? Math.min(100, Math.max(0, Math.round(meta.volume)))
-        : defaultAudioMeta.volume,
-  }
-}
-
 function getAudioDisplayTitle(audio: AudioFileEntry): string {
   return audio.metadata.title?.trim() || audio.name
-}
-
-function getCollectionDisplayTitle(metaTitle: string | null | undefined, fallbackName: string): string {
-  const trimmed = metaTitle?.trim()
-  return trimmed && trimmed.length > 0 ? trimmed : fallbackName
-}
-
-async function getTextFileJson<T>(
-  dirHandle: FileSystemDirectoryHandle,
-  fileName: string,
-): Promise<T | null> {
-  try {
-    const handle = await dirHandle.getFileHandle(fileName)
-    const file = await handle.getFile()
-    const text = await file.text()
-    return JSON.parse(text) as T
-  } catch {
-    return null
-  }
-}
-
-async function writeTextFileJson(
-  dirHandle: FileSystemDirectoryHandle,
-  fileName: string,
-  value: unknown,
-): Promise<void> {
-  const handle = await dirHandle.getFileHandle(fileName, { create: true })
-  const writable = await handle.createWritable()
-  await writable.write(JSON.stringify(value, null, 2))
-  await writable.close()
-}
-
-async function writeBinaryFile(
-  dirHandle: FileSystemDirectoryHandle,
-  fileName: string,
-  data: ArrayBuffer,
-): Promise<void> {
-  const handle = await dirHandle.getFileHandle(fileName, { create: true })
-  const writable = await handle.createWritable()
-  await writable.write(data)
-  await writable.close()
-}
-
-async function hasFile(
-  dirHandle: FileSystemDirectoryHandle,
-  fileName: string,
-): Promise<boolean> {
-  try {
-    await dirHandle.getFileHandle(fileName)
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function uniqueFileName(
-  dirHandle: FileSystemDirectoryHandle,
-  desiredName: string,
-): Promise<string> {
-  if (!(await hasFile(dirHandle, desiredName))) {
-    return desiredName
-  }
-
-  const dotIndex = desiredName.lastIndexOf('.')
-  const baseName = dotIndex >= 0 ? desiredName.slice(0, dotIndex) : desiredName
-  const extension = dotIndex >= 0 ? desiredName.slice(dotIndex) : ''
-  let counter = 2
-
-  while (counter < 10000) {
-    const candidate = `${baseName} (${counter})${extension}`
-    if (!(await hasFile(dirHandle, candidate))) {
-      return candidate
-    }
-    counter += 1
-  }
-
-  return `${baseName}-${Date.now()}${extension}`
-}
-
-async function ensureDirectory(
-  parent: FileSystemDirectoryHandle,
-  name: string,
-  create = true,
-): Promise<FileSystemDirectoryHandle> {
-  return parent.getDirectoryHandle(name, { create })
-}
-
-async function resolveRelativeDirectoryHandle(
-  rootDirHandle: FileSystemDirectoryHandle,
-  relativePath: string,
-  create = false,
-): Promise<FileSystemDirectoryHandle> {
-  const normalizedPath = normalizeRelativePath(relativePath)
-  if (!normalizedPath) {
-    return rootDirHandle
-  }
-
-  let current = rootDirHandle
-  const segments = normalizedPath.split('/')
-  for (const segment of segments) {
-    current = await current.getDirectoryHandle(segment, { create })
-  }
-  return current
-}
-
-async function tryResolveRelativeDirectoryHandle(
-  rootDirHandle: FileSystemDirectoryHandle,
-  relativePath: string,
-): Promise<FileSystemDirectoryHandle | null> {
-  try {
-    return await resolveRelativeDirectoryHandle(rootDirHandle, relativePath, false)
-  } catch {
-    return null
-  }
-}
-
-async function copyDirectoryContents(
-  sourceDirHandle: FileSystemDirectoryHandle,
-  targetDirHandle: FileSystemDirectoryHandle,
-): Promise<void> {
-  for await (const [, entry] of sourceDirHandle.entries()) {
-    if (entry.kind === 'directory') {
-      const sourceChildDirHandle = entry as FileSystemDirectoryHandle
-      const targetChildDirHandle = await targetDirHandle.getDirectoryHandle(sourceChildDirHandle.name, {
-        create: true,
-      })
-      await copyDirectoryContents(sourceChildDirHandle, targetChildDirHandle)
-      continue
-    }
-
-    if (entry.kind !== 'file') {
-      continue
-    }
-
-    const sourceFileHandle = entry as FileSystemFileHandle
-    const sourceFile = await sourceFileHandle.getFile()
-    await writeBinaryFile(targetDirHandle, sourceFileHandle.name, await sourceFile.arrayBuffer())
-  }
-}
-
-async function hasFolderPermission(
-  handle: FileSystemDirectoryHandle,
-  shouldRequest: boolean,
-): Promise<boolean> {
-  const opts: FileSystemHandlePermissionDescriptor = { mode: 'readwrite' }
-  if (!handle.queryPermission || !handle.requestPermission) {
-    return true
-  }
-
-  const queried = await handle.queryPermission(opts)
-  if (queried === 'granted') {
-    return true
-  }
-  if (!shouldRequest) {
-    return false
-  }
-  const requested = await handle.requestPermission(opts)
-  return requested === 'granted'
 }
 
 function createTrackId(audioId: string): string {
   return `${audioId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-export function useSoundboard() {
+export function useSoundboard(
+  options?: {
+    storageAdapter?: StorageAdapter
+  },
+) {
+  const storageAdapter = options?.storageAdapter ?? createFileSystemStorageAdapter()
   let webAudioContext: AudioContext | null = null
   const superTrackSkippers = new Map<string, () => void>()
-  const rootHandle = ref<FileSystemDirectoryHandle | null>(null)
+  const rootHandle = ref<StorageRoot | null>(null)
   const collections = ref<CollectionEntry[]>([])
   const selectedCollectionName = ref<string | null>(null)
   const activeTracks = ref<ActiveTrack[]>([])
@@ -251,11 +52,7 @@ export function useSoundboard() {
   const restoring = ref(false)
   const status = ref<string>('Connect a local folder to start.')
 
-  const isFileSystemAccessSupported =
-    typeof window !== 'undefined' &&
-    'showDirectoryPicker' in window &&
-    'indexedDB' in window &&
-    'FileSystemDirectoryHandle' in window
+  const isFileSystemAccessSupported = storageAdapter.isSupported()
 
   const selectedCollection = computed(() =>
     collections.value.find((collection) => collection.name === selectedCollectionName.value) ?? null,
@@ -390,93 +187,8 @@ export function useSoundboard() {
     track.totalSeconds = Math.max(0, duration)
   }
 
-  async function writeCollectionMeta(collection: CollectionEntry): Promise<void> {
-    await writeTextFileJson(collection.dirHandle, COLLECTION_META_FILE, {
-      title: collection.title,
-      iconImage: collection.iconImage,
-    } satisfies CollectionMeta)
-  }
-
-  async function writeAudioMeta(audio: AudioFileEntry): Promise<void> {
-    await writeTextFileJson(audio.audioDirHandle, audio.metadataFileName, audio.metadata)
-  }
-
-  async function loadCollections(handle: FileSystemDirectoryHandle): Promise<void> {
-    const collectionsDir = await ensureDirectory(handle, 'collections', true)
-    const nextCollections: CollectionEntry[] = []
-
-    for await (const [, entry] of collectionsDir.entries()) {
-      if (entry.kind !== 'directory') {
-        continue
-      }
-
-      const dirHandle = entry as FileSystemDirectoryHandle
-      const meta = await getTextFileJson<CollectionMeta>(dirHandle, COLLECTION_META_FILE)
-      const audioDirHandle = await ensureDirectory(dirHandle, 'audio_files', true)
-      const audioFiles: AudioFileEntry[] = []
-      const directoryPaths: string[] = []
-
-      async function walkAudioDirectory(
-        currentDirHandle: FileSystemDirectoryHandle,
-        currentRelativePath: string,
-      ): Promise<void> {
-        for await (const [, child] of currentDirHandle.entries()) {
-          if (child.kind === 'directory') {
-            const childDirHandle = child as FileSystemDirectoryHandle
-            const childRelativePath = joinRelativePath(currentRelativePath, childDirHandle.name)
-            directoryPaths.push(childRelativePath)
-            await walkAudioDirectory(childDirHandle, childRelativePath)
-            continue
-          }
-
-          if (child.kind !== 'file') {
-            continue
-          }
-          const fileHandle = child as FileSystemFileHandle
-          if (!AUDIO_EXTENSIONS.has(extname(fileHandle.name))) {
-            continue
-          }
-
-          const metadataFileName = metadataFileNameForAudio(fileHandle.name)
-          const rawMeta = await getTextFileJson<Partial<AudioMeta>>(currentDirHandle, metadataFileName)
-          const metadata = sanitizeAudioMeta(rawMeta)
-          const relativeAudioPath = joinRelativePath(currentRelativePath, fileHandle.name)
-
-          audioFiles.push({
-            id: `${dirHandle.name}/${relativeAudioPath}`,
-            name: fileHandle.name,
-            relativePath: currentRelativePath,
-            collectionName: dirHandle.name,
-            fileHandle,
-            audioDirHandle: currentDirHandle,
-            metadataFileName,
-            metadata,
-          })
-        }
-      }
-
-      await walkAudioDirectory(audioDirHandle, '')
-
-      directoryPaths.sort((a, b) => a.localeCompare(b))
-      audioFiles.sort((a, b) => {
-        if (a.relativePath !== b.relativePath) {
-          return a.relativePath.localeCompare(b.relativePath)
-        }
-        return a.name.localeCompare(b.name)
-      })
-
-      nextCollections.push({
-        name: dirHandle.name,
-        title: getCollectionDisplayTitle(meta?.title, dirHandle.name),
-        iconImage: meta?.iconImage ?? null,
-        dirHandle,
-        audioDirHandle,
-        directoryPaths,
-        audioFiles,
-      })
-    }
-
-    nextCollections.sort((a, b) => a.name.localeCompare(b.name))
+  async function loadCollections(root: StorageRoot): Promise<void> {
+    const nextCollections = await storageAdapter.loadCollections(root)
     collections.value = nextCollections
 
     if (!selectedCollectionName.value && nextCollections.length > 0) {
@@ -489,25 +201,24 @@ export function useSoundboard() {
     }
   }
 
-  async function loadFromDirectoryHandle(
-    handle: FileSystemDirectoryHandle,
+  async function loadFromRoot(
+    root: StorageRoot,
     options?: { restored?: boolean },
   ): Promise<boolean> {
     loading.value = true
     try {
-      const granted = await hasFolderPermission(handle, true)
+      const granted = await storageAdapter.ensureRootPermission(root, true)
       if (!granted) {
         status.value = 'Folder permission was denied.'
         return false
       }
 
-      rootHandle.value = handle
-      await saveFolderHandle(handle)
-      await loadCollections(handle)
+      rootHandle.value = root
+      await loadCollections(root)
 
       status.value = options?.restored
-        ? `Reopened folder: ${handle.name}`
-        : `Connected folder: ${handle.name}`
+        ? `Reopened folder: ${root.name}`
+        : `Connected folder: ${root.name}`
       return true
     } catch (error) {
       console.error(error)
@@ -524,15 +235,13 @@ export function useSoundboard() {
       return
     }
 
-    const picker = window.showDirectoryPicker
-    if (!picker) {
-      status.value = 'Directory picker is not available.'
-      return
-    }
-
     try {
-      const handle = await picker({ mode: 'readwrite' })
-      await loadFromDirectoryHandle(handle)
+      const root = await storageAdapter.connectRoot()
+      if (!root) {
+        status.value = 'Directory picker is not available.'
+        return
+      }
+      await loadFromRoot(root)
     } catch {
       status.value = 'Folder selection cancelled.'
     }
@@ -545,18 +254,18 @@ export function useSoundboard() {
 
     restoring.value = true
     try {
-      const handle = await loadFolderHandle()
-      if (!handle) {
+      const root = await storageAdapter.restoreRoot()
+      if (!root) {
         return
       }
 
-      const granted = await hasFolderPermission(handle, true)
+      const granted = await storageAdapter.ensureRootPermission(root, true)
       if (!granted) {
-        status.value = `Reconnect folder "${handle.name}" to restore access.`
+        status.value = `Reconnect folder "${root.name}" to restore access.`
         return
       }
 
-      await loadFromDirectoryHandle(handle, { restored: true })
+      await loadFromRoot(root, { restored: true })
     } catch (error) {
       console.error(error)
       status.value = 'Could not restore previous folder. Connect it again.'
@@ -575,31 +284,7 @@ export function useSoundboard() {
       throw new Error('Collection name is required')
     }
 
-    const collectionsDir = await ensureDirectory(rootHandle.value, 'collections', true)
-    const dirHandle = await ensureDirectory(collectionsDir, trimmed, true)
-    await ensureDirectory(dirHandle, 'audio_files', true)
-
-    const newCollection: CollectionEntry = {
-      name: trimmed,
-      title: trimmed,
-      iconImage: null,
-      dirHandle,
-      audioDirHandle: await ensureDirectory(dirHandle, 'audio_files', true),
-      directoryPaths: [],
-      audioFiles: [],
-    }
-
-    if (iconFile) {
-      const iconExt = extname(iconFile.name) || '.png'
-      const iconName = `collection-icon${iconExt}`
-      const iconHandle = await dirHandle.getFileHandle(iconName, { create: true })
-      const writable = await iconHandle.createWritable()
-      await writable.write(await iconFile.arrayBuffer())
-      await writable.close()
-      newCollection.iconImage = iconName
-    }
-
-    await writeCollectionMeta(newCollection)
+    await storageAdapter.createCollection(rootHandle.value, trimmed, iconFile)
     await loadCollections(rootHandle.value)
     selectedCollectionName.value = trimmed
   }
@@ -614,24 +299,7 @@ export function useSoundboard() {
       return
     }
 
-    const targetAudioDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      targetDirectoryPath,
-      true,
-    )
-
-    for (const file of files) {
-      if (!AUDIO_EXTENSIONS.has(extname(file.name))) {
-        continue
-      }
-      const handle = await targetAudioDirHandle.getFileHandle(file.name, { create: true })
-      const writable = await handle.createWritable()
-      await writable.write(await file.arrayBuffer())
-      await writable.close()
-
-      const metaFileName = metadataFileNameForAudio(file.name)
-      await writeTextFileJson(targetAudioDirHandle, metaFileName, defaultAudioMeta)
-    }
+    await storageAdapter.importAudioFiles(collection, files, targetDirectoryPath)
 
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
@@ -654,12 +322,7 @@ export function useSoundboard() {
       return
     }
 
-    const parentHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      parentDirectoryPath,
-      true,
-    )
-    await resolveRelativeDirectoryHandle(parentHandle, normalizedDirectoryName, true)
+    await storageAdapter.createCollectionSubDirectory(collection, parentDirectoryPath, normalizedDirectoryName)
 
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
@@ -698,63 +361,34 @@ export function useSoundboard() {
       return
     }
 
-    const nextDirectoryName = normalizeRelativePath(newDirectoryName.trim())
-    if (!nextDirectoryName || nextDirectoryName.includes('/')) {
-      status.value = 'Directory name must be a single folder name.'
-      return
+    try {
+      const result = await storageAdapter.renameCollectionSubDirectory(
+        collection,
+        normalizedDirectoryPath,
+        newDirectoryName,
+      )
+      if (!result) {
+        return
+      }
+
+      const activeTrackIds = activeTracks.value
+        .filter((track) => {
+          const prefix = `${collectionName}/${result.fromPath}/`
+          return track.audioId.startsWith(prefix)
+        })
+        .map((track) => track.id)
+      for (const trackId of activeTrackIds) {
+        stopTrack(trackId)
+      }
+
+      if (rootHandle.value) {
+        await loadCollections(rootHandle.value)
+      }
+
+      status.value = `Renamed directory: /${result.fromPath} -> /${result.toPath}`
+    } catch (error) {
+      status.value = error instanceof Error ? error.message : 'Unable to rename directory.'
     }
-
-    const sourceSegments = normalizedDirectoryPath.split('/')
-    const sourceLeafName = sourceSegments[sourceSegments.length - 1] ?? ''
-    if (!sourceLeafName) {
-      return
-    }
-
-    const parentDirectoryPath = sourceSegments.slice(0, -1).join('/')
-    const normalizedTargetPath = joinRelativePath(parentDirectoryPath, nextDirectoryName)
-    if (normalizedTargetPath === normalizedDirectoryPath) {
-      return
-    }
-
-    const existingTargetHandle = await tryResolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      normalizedTargetPath,
-    )
-    if (existingTargetHandle) {
-      status.value = `Directory "${nextDirectoryName}" already exists.`
-      return
-    }
-
-    const sourceDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      normalizedDirectoryPath,
-      false,
-    )
-    const parentDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      parentDirectoryPath,
-      false,
-    )
-    const targetDirHandle = await parentDirHandle.getDirectoryHandle(nextDirectoryName, { create: true })
-
-    await copyDirectoryContents(sourceDirHandle, targetDirHandle)
-    await parentDirHandle.removeEntry(sourceLeafName, { recursive: true })
-
-    const activeTrackIds = activeTracks.value
-      .filter((track) => {
-        const prefix = `${collectionName}/${normalizedDirectoryPath}/`
-        return track.audioId.startsWith(prefix)
-      })
-      .map((track) => track.id)
-    for (const trackId of activeTrackIds) {
-      stopTrack(trackId)
-    }
-
-    if (rootHandle.value) {
-      await loadCollections(rootHandle.value)
-    }
-
-    status.value = `Renamed directory: /${normalizedDirectoryPath} -> /${normalizedTargetPath}`
   }
 
   async function moveCollectionSubDirectory(
@@ -773,68 +407,32 @@ export function useSoundboard() {
       return
     }
 
-    const sourceSegments = normalizedDirectoryPath.split('/')
-    const sourceLeafName = sourceSegments[sourceSegments.length - 1] ?? ''
-    if (!sourceLeafName) {
-      return
+    try {
+      const result = await storageAdapter.moveCollectionSubDirectory(
+        collection,
+        normalizedDirectoryPath,
+        normalizedTargetParentPath,
+      )
+      if (!result) {
+        return
+      }
+
+      const sourcePrefix = `${collectionName}/${result.fromPath}/`
+      const activeTrackIds = activeTracks.value
+        .filter((track) => track.audioId.startsWith(sourcePrefix))
+        .map((track) => track.id)
+      for (const trackId of activeTrackIds) {
+        stopTrack(trackId)
+      }
+
+      if (rootHandle.value) {
+        await loadCollections(rootHandle.value)
+      }
+
+      status.value = `Moved directory: /${result.fromPath} -> /${result.toPath}`
+    } catch (error) {
+      status.value = error instanceof Error ? error.message : 'Unable to move directory.'
     }
-
-    const sourceParentPath = sourceSegments.slice(0, -1).join('/')
-    const normalizedTargetPath = joinRelativePath(normalizedTargetParentPath, sourceLeafName)
-    if (normalizedTargetPath === normalizedDirectoryPath) {
-      return
-    }
-
-    if (
-      normalizedTargetParentPath === normalizedDirectoryPath ||
-      normalizedTargetParentPath.startsWith(`${normalizedDirectoryPath}/`)
-    ) {
-      status.value = 'Cannot move a folder into itself or one of its subfolders.'
-      return
-    }
-
-    const existingTargetHandle = await tryResolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      normalizedTargetPath,
-    )
-    if (existingTargetHandle) {
-      status.value = `Directory "${sourceLeafName}" already exists in /${normalizedTargetParentPath || ''}`
-      return
-    }
-
-    const sourceDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      normalizedDirectoryPath,
-      false,
-    )
-    const sourceParentDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      sourceParentPath,
-      false,
-    )
-    const targetParentDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      normalizedTargetParentPath,
-      false,
-    )
-    const targetDirHandle = await targetParentDirHandle.getDirectoryHandle(sourceLeafName, { create: true })
-
-    await copyDirectoryContents(sourceDirHandle, targetDirHandle)
-    await sourceParentDirHandle.removeEntry(sourceLeafName, { recursive: true })
-
-    const sourcePrefix = `${collectionName}/${normalizedDirectoryPath}/`
-    const activeTrackIds = activeTracks.value
-      .filter((track) => track.audioId.startsWith(sourcePrefix))
-      .map((track) => track.id)
-    for (const trackId of activeTrackIds) {
-      stopTrack(trackId)
-    }
-
-    if (rootHandle.value) {
-      await loadCollections(rootHandle.value)
-    }
-
-    status.value = `Moved directory: /${normalizedDirectoryPath} -> /${normalizedTargetPath}`
   }
 
   async function deleteCollectionSubDirectory(
@@ -851,24 +449,14 @@ export function useSoundboard() {
       return
     }
 
-    const directorySegments = normalizedDirectoryPath.split('/')
-    const directoryName = directorySegments[directorySegments.length - 1] ?? ''
-    if (!directoryName) {
+    const deletedPath = await storageAdapter.deleteCollectionSubDirectory(collection, normalizedDirectoryPath)
+    if (!deletedPath) {
       return
     }
 
-    const parentDirectoryPath = directorySegments.slice(0, -1).join('/')
-    const parentDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      parentDirectoryPath,
-      false,
-    )
-
-    await parentDirHandle.removeEntry(directoryName, { recursive: true })
-
     const activeTrackIds = activeTracks.value
       .filter((track) => {
-        const prefix = `${collectionName}/${normalizedDirectoryPath}/`
+        const prefix = `${collectionName}/${deletedPath}/`
         return track.audioId.startsWith(prefix)
       })
       .map((track) => track.id)
@@ -880,7 +468,7 @@ export function useSoundboard() {
       await loadCollections(rootHandle.value)
     }
 
-    status.value = `Deleted directory: /${normalizedDirectoryPath}`
+    status.value = `Deleted directory: /${deletedPath}`
   }
 
   async function setCollectionIcon(collectionName: string, iconFile: File | null): Promise<void> {
@@ -889,19 +477,7 @@ export function useSoundboard() {
       return
     }
 
-    if (iconFile) {
-      const iconExt = extname(iconFile.name) || '.png'
-      const iconName = `collection-icon${iconExt}`
-      const handle = await collection.dirHandle.getFileHandle(iconName, { create: true })
-      const writable = await handle.createWritable()
-      await writable.write(await iconFile.arrayBuffer())
-      await writable.close()
-      collection.iconImage = iconName
-    } else {
-      collection.iconImage = null
-    }
-
-    await writeCollectionMeta(collection)
+    await storageAdapter.setCollectionIcon(collection, iconFile)
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
     }
@@ -913,8 +489,7 @@ export function useSoundboard() {
       return
     }
 
-    collection.title = getCollectionDisplayTitle(title, collection.name)
-    await writeCollectionMeta(collection)
+    await storageAdapter.setCollectionTitle(collection, title)
 
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
@@ -938,8 +513,7 @@ export function useSoundboard() {
       stopTrack(trackId)
     }
 
-    const collectionsDir = await ensureDirectory(rootHandle.value, 'collections', true)
-    await collectionsDir.removeEntry(collectionName, { recursive: true })
+    await storageAdapter.deleteCollection(rootHandle.value, collectionName)
     await loadCollections(rootHandle.value)
     status.value = `Deleted collection: ${collection.title}`
   }
@@ -998,7 +572,7 @@ export function useSoundboard() {
       return
     }
 
-    const file = await audio.fileHandle.getFile()
+    const file = await storageAdapter.getAudioFile(audio)
     const trackId = createTrackId(audio.id)
     const start = audio.metadata.trimStart ?? 0
     const boundedStart = Math.max(0, start)
@@ -1315,7 +889,7 @@ export function useSoundboard() {
       cleanupCurrentElement()
 
       try {
-        const file = await nextAudio.fileHandle.getFile()
+        const file = await storageAdapter.getAudioFile(nextAudio)
         if (disposed || currentToken !== transitionToken) {
           return
         }
@@ -1414,17 +988,7 @@ export function useSoundboard() {
       return
     }
 
-    audio.metadata = sanitizeAudioMeta({ ...audio.metadata, ...patch })
-
-    if (
-      audio.metadata.trimStart !== null &&
-      audio.metadata.trimEnd !== null &&
-      audio.metadata.trimStart > audio.metadata.trimEnd
-    ) {
-      audio.metadata.trimEnd = audio.metadata.trimStart
-    }
-
-    await writeAudioMeta(audio)
+    audio.metadata = await storageAdapter.updateAudioMeta(audio, patch)
   }
 
   async function setAudioIcon(audioId: string, iconFile: File | null): Promise<void> {
@@ -1433,19 +997,7 @@ export function useSoundboard() {
       return
     }
 
-    if (iconFile) {
-      const iconExt = extname(iconFile.name) || '.png'
-      const iconName = `${audio.name}.icon${iconExt}`
-      const iconHandle = await audio.audioDirHandle.getFileHandle(iconName, { create: true })
-      const writable = await iconHandle.createWritable()
-      await writable.write(await iconFile.arrayBuffer())
-      await writable.close()
-      audio.metadata.iconImage = iconName
-    } else {
-      audio.metadata.iconImage = null
-    }
-
-    await writeAudioMeta(audio)
+    audio.metadata = await storageAdapter.setAudioIcon(audio, iconFile)
   }
 
   async function deleteAudioFile(audioId: string): Promise<void> {
@@ -1461,91 +1013,13 @@ export function useSoundboard() {
       stopTrack(trackId)
     }
 
-    try {
-      await audio.audioDirHandle.removeEntry(audio.name)
-    } catch {
-      // no-op; file may have been removed already
-    }
-
-    try {
-      await audio.audioDirHandle.removeEntry(audio.metadataFileName)
-    } catch {
-      // no-op; metadata file may not exist
-    }
-
-    if (audio.metadata.iconImage) {
-      try {
-        await audio.audioDirHandle.removeEntry(audio.metadata.iconImage)
-      } catch {
-        // no-op; icon file may not exist
-      }
-    }
+    await storageAdapter.deleteAudioFile(audio)
 
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
     }
 
     status.value = `Deleted audio file: ${getAudioDisplayTitle(audio)}`
-  }
-
-  async function moveAudioFileEntry(
-    audio: AudioFileEntry,
-    targetAudioDirHandle: FileSystemDirectoryHandle,
-  ): Promise<string> {
-    const activeTrackIds = activeTracks.value
-      .filter((track) => track.audioId === audio.id)
-      .map((track) => track.id)
-    for (const trackId of activeTrackIds) {
-      stopTrack(trackId)
-    }
-
-    const sourceAudioFile = await audio.fileHandle.getFile()
-    const targetAudioName = await uniqueFileName(targetAudioDirHandle, audio.name)
-    await writeBinaryFile(
-      targetAudioDirHandle,
-      targetAudioName,
-      await sourceAudioFile.arrayBuffer(),
-    )
-
-    const nextMeta = { ...audio.metadata }
-    if (audio.metadata.iconImage) {
-      try {
-        const sourceIconHandle = await audio.audioDirHandle.getFileHandle(audio.metadata.iconImage)
-        const sourceIconFile = await sourceIconHandle.getFile()
-        const targetIconName = await uniqueFileName(targetAudioDirHandle, audio.metadata.iconImage)
-        await writeBinaryFile(
-          targetAudioDirHandle,
-          targetIconName,
-          await sourceIconFile.arrayBuffer(),
-        )
-        nextMeta.iconImage = targetIconName
-      } catch {
-        nextMeta.iconImage = null
-      }
-    }
-
-    const targetMetaFileName = metadataFileNameForAudio(targetAudioName)
-    await writeTextFileJson(targetAudioDirHandle, targetMetaFileName, nextMeta)
-
-    try {
-      await audio.audioDirHandle.removeEntry(audio.name)
-    } catch {
-      // no-op; file may have been removed already
-    }
-    try {
-      await audio.audioDirHandle.removeEntry(audio.metadataFileName)
-    } catch {
-      // no-op; metadata file may have been removed already
-    }
-    if (audio.metadata.iconImage) {
-      try {
-        await audio.audioDirHandle.removeEntry(audio.metadata.iconImage)
-      } catch {
-        // no-op; icon file may have been removed already
-      }
-    }
-
-    return getAudioDisplayTitle(audio)
   }
 
   async function moveAudioFilesToDirectory(
@@ -1559,11 +1033,6 @@ export function useSoundboard() {
     }
 
     const normalizedTargetPath = normalizeRelativePath(targetDirectoryPath)
-    const targetAudioDirHandle = await resolveRelativeDirectoryHandle(
-      collection.audioDirHandle,
-      normalizedTargetPath,
-      true,
-    )
 
     const uniqueAudioIds = [...new Set(audioIds)]
     const movableAudio = uniqueAudioIds
@@ -1582,10 +1051,19 @@ export function useSoundboard() {
       return
     }
 
-    const movedTitles: string[] = []
     for (const audio of movableAudio) {
-      movedTitles.push(await moveAudioFileEntry(audio, targetAudioDirHandle))
+      const activeTrackIds = activeTracks.value
+        .filter((track) => track.audioId === audio.id)
+        .map((track) => track.id)
+      for (const trackId of activeTrackIds) {
+        stopTrack(trackId)
+      }
     }
+    const movedTitles = await storageAdapter.moveAudioFilesToDirectory(
+      collection,
+      movableAudio,
+      normalizedTargetPath,
+    )
 
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
@@ -1627,10 +1105,15 @@ export function useSoundboard() {
       return
     }
 
-    const movedTitles: string[] = []
     for (const audio of movableAudio) {
-      movedTitles.push(await moveAudioFileEntry(audio, targetCollection.audioDirHandle))
+      const activeTrackIds = activeTracks.value
+        .filter((track) => track.audioId === audio.id)
+        .map((track) => track.id)
+      for (const trackId of activeTrackIds) {
+        stopTrack(trackId)
+      }
     }
+    const movedTitles = await storageAdapter.moveAudioFilesToCollection(targetCollection, movableAudio)
 
     if (rootHandle.value) {
       await loadCollections(rootHandle.value)
@@ -1648,30 +1131,11 @@ export function useSoundboard() {
   }
 
   async function resolveCollectionIconUrl(collection: CollectionEntry): Promise<string | null> {
-    if (!collection.iconImage) {
-      return null
-    }
-    try {
-      const handle = await collection.dirHandle.getFileHandle(collection.iconImage)
-      const file = await handle.getFile()
-      return URL.createObjectURL(file)
-    } catch {
-      return null
-    }
+    return storageAdapter.resolveCollectionIconUrl(collection)
   }
 
   async function resolveAudioIconUrl(audio: AudioFileEntry): Promise<string | null> {
-    const iconName = audio.metadata.iconImage
-    if (!iconName) {
-      return null
-    }
-    try {
-      const handle = await audio.audioDirHandle.getFileHandle(iconName)
-      const file = await handle.getFile()
-      return URL.createObjectURL(file)
-    } catch {
-      return null
-    }
+    return storageAdapter.resolveAudioIconUrl(audio)
   }
 
   onBeforeUnmount(() => {

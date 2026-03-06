@@ -151,3 +151,30 @@ Notes:
 - No backend services are required.
 - If folder restore fails, reconnect from the sidebar.
 - If File System Access API is unavailable, folder connection is not possible.
+
+## Storage Adapter API
+
+Storage is now pluggable through a `StorageAdapter` interface:
+
+- Interface: `src/storage/storageAdapter.ts`
+- Default adapter (File System Access API): `src/storage/fileSystemStorageAdapter.ts`
+
+`useSoundboard()` accepts an optional adapter:
+
+```ts
+import { useSoundboard } from '@/composables/useSoundboard'
+import type { StorageAdapter } from '@/storage/storageAdapter'
+
+const myAdapter: StorageAdapter = /* your implementation */
+const soundboard = useSoundboard({ storageAdapter: myAdapter })
+```
+
+Adapter implementations must provide all operations needed by the UI, including:
+
+- root connection/restore/permission
+- collection listing and CRUD
+- folder CRUD inside collections
+- audio import/move/delete and metadata/icon updates
+- resolving playable audio `File` objects and icon URLs
+
+This lets you keep the same UI behavior while replacing storage backend logic (for example, a remote/S3-backed adapter).
