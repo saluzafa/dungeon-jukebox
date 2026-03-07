@@ -21,6 +21,7 @@ It uses the browser File System Access API, so your collections, audio files, an
   - volume,
   - trim start/end,
   - infinite loop,
+  - loop delay between repeats,
   - custom icon.
 - Control playback with per-track volume, global volume, and Stop All.
 - Play random audio from current visible results.
@@ -140,6 +141,7 @@ Notes:
   "iconImage": null,
   "category": "sound",
   "infiniteLoop": false,
+  "loopDelaySeconds": 0,
   "trimStart": null,
   "trimEnd": null,
   "volume": 100

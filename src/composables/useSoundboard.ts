@@ -157,6 +157,13 @@ export function useSoundboard(
     return Math.max(0, Math.min(100, Math.round(volume)))
   }
 
+  function clampLoopDelaySeconds(delay: number | null | undefined): number {
+    if (typeof delay !== 'number' || !Number.isFinite(delay)) {
+      return 0
+    }
+    return Math.max(0, delay)
+  }
+
   function getTrackDisplayTitle(audio: AudioFileEntry): string {
     return `${
       collections.value.find((collection) => collection.name === audio.collectionName)?.title ??
@@ -672,8 +679,11 @@ export function useSoundboard(
     const boundedStart = Math.max(0, start)
     const trackVolume = clampVolume(audio.metadata.volume ?? 100)
     const end = audio.metadata.trimEnd
+    const loopDelaySeconds = clampLoopDelaySeconds(audio.metadata.loopDelaySeconds)
+    const hasLoopDelay = loopDelaySeconds > 0
+    const loopDelayMs = Math.round(loopDelaySeconds * 1000)
 
-    if (audio.metadata.infiniteLoop) {
+    if (audio.metadata.infiniteLoop && !hasLoopDelay) {
       const context = getWebAudioContext()
       if (context) {
         try {
@@ -818,10 +828,47 @@ export function useSoundboard(
 
     const sourceUrl = URL.createObjectURL(file)
     const element = new Audio(sourceUrl)
+    let loopRestartTimeoutId: number | null = null
+    let isLoopRestartPending = false
+
+    const clearLoopRestart = () => {
+      if (loopRestartTimeoutId !== null) {
+        window.clearTimeout(loopRestartTimeoutId)
+        loopRestartTimeoutId = null
+      }
+      isLoopRestartPending = false
+    }
+
+    const scheduleLoopRestart = () => {
+      if (!audio.metadata.infiniteLoop || isLoopRestartPending) {
+        return
+      }
+
+      isLoopRestartPending = true
+      element.pause()
+      const restartPlayback = () => {
+        loopRestartTimeoutId = null
+        isLoopRestartPending = false
+        const track = activeTracks.value.find((item) => item.id === trackId)
+        if (!track) {
+          return
+        }
+        element.currentTime = Math.min(boundedStart, element.duration || boundedStart)
+        syncTrackTiming(trackId, element)
+        void element.play()
+      }
+
+      if (loopDelayMs <= 0) {
+        restartPlayback()
+        return
+      }
+
+      loopRestartTimeoutId = window.setTimeout(restartPlayback, loopDelayMs)
+    }
 
     const onLoadedMetadata = () => {
       element.currentTime = Math.min(boundedStart, element.duration || boundedStart)
-      if (audio.metadata.infiniteLoop && (end === null || end === undefined)) {
+      if (audio.metadata.infiniteLoop && (end === null || end === undefined) && !hasLoopDelay) {
         element.loop = true
       }
       syncTrackTiming(trackId, element)
@@ -838,17 +885,25 @@ export function useSoundboard(
       }
 
       if (audio.metadata.infiniteLoop) {
-        element.currentTime = boundedStart
-        void element.play()
+        if (hasLoopDelay) {
+          scheduleLoopRestart()
+        } else {
+          element.currentTime = boundedStart
+          void element.play()
+        }
       } else {
         stopTrack(trackId)
       }
     }
 
     const onEnded = () => {
-      if (audio.metadata.infiniteLoop && (end === null || end === undefined)) {
-        element.currentTime = boundedStart
-        void element.play()
+      if (audio.metadata.infiniteLoop) {
+        if (hasLoopDelay) {
+          scheduleLoopRestart()
+        } else {
+          element.currentTime = boundedStart
+          void element.play()
+        }
         return
       }
       stopTrack(trackId)
@@ -862,6 +917,7 @@ export function useSoundboard(
       element.removeEventListener('loadedmetadata', onLoadedMetadata)
       element.removeEventListener('timeupdate', onTimeUpdate)
       element.removeEventListener('ended', onEnded)
+      clearLoopRestart()
       URL.revokeObjectURL(sourceUrl)
     }
 

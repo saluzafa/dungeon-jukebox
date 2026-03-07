@@ -5,6 +5,7 @@ export interface AudioMeta {
   iconImage: string | null
   category: AudioCategory
   infiniteLoop: boolean
+  loopDelaySeconds: number
   trimStart: number | null
   trimEnd: number | null
   volume: number

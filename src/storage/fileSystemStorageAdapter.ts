@@ -29,6 +29,7 @@ const defaultAudioMeta: AudioMeta = {
   iconImage: null,
   category: 'music',
   infiniteLoop: false,
+  loopDelaySeconds: 0,
   trimStart: null,
   trimEnd: null,
   volume: 100,
@@ -78,6 +79,10 @@ function sanitizeAudioMeta(meta: Partial<AudioMeta> | null | undefined): AudioMe
     iconImage: typeof meta?.iconImage === 'string' ? meta.iconImage : null,
     category,
     infiniteLoop: Boolean(meta?.infiniteLoop),
+    loopDelaySeconds:
+      typeof meta?.loopDelaySeconds === 'number' && Number.isFinite(meta.loopDelaySeconds)
+        ? Math.max(0, meta.loopDelaySeconds)
+        : defaultAudioMeta.loopDelaySeconds,
     trimStart: typeof meta?.trimStart === 'number' ? Math.max(0, meta.trimStart) : null,
     trimEnd: typeof meta?.trimEnd === 'number' ? Math.max(0, meta.trimEnd) : null,
     volume:

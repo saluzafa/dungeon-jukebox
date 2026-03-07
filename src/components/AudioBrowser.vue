@@ -1289,6 +1289,22 @@ watch(
         Infinite loop
       </label>
 
+      <label v-if="selectedAudio.metadata.infiniteLoop" class="col-span-2 space-y-1">
+        <span class="text-xs text-slate-300">Loop delay (seconds)</span>
+        <input
+          type="number"
+          min="0"
+          step="0.1"
+          class="w-full rounded-lg bg-slate-800 border border-slate-700 px-2 py-1"
+          :value="selectedAudio.metadata.loopDelaySeconds"
+          @input="
+            updateSelectedAudioMeta({
+              loopDelaySeconds: Math.max(0, Number(($event.target as HTMLInputElement).value) || 0),
+            })
+          "
+        />
+      </label>
+
       <label class="space-y-1">
         <span class="text-xs text-slate-300">Trim start (seconds)</span>
         <input
