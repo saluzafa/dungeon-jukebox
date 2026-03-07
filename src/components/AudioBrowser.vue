@@ -13,6 +13,7 @@ const props = defineProps<{
   allCollections: CollectionEntry[]
   audioIconUrls: Record<string, string>
   activeTracks: ActiveTrack[]
+  favoriteAudioIds: string[]
   currentDirectoryPath: string
   isAutoAssigningTitles: boolean
 }>()
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   deleteDirectory: [collectionName: string, directoryPath: string]
   moveDirectory: [collectionName: string, directoryPath: string, targetParentDirectoryPath: string]
   updateCurrentDirectoryPath: [directoryPath: string]
+  toggleFavoriteAudio: [audioId: string]
 }>()
 
 const selectedAudioId = ref<string | null>(null)
@@ -160,6 +162,7 @@ const selectedAudioFiles = computed(() => {
   return allAudioFiles.value.filter((audio) => selectedIdSet.has(audio.id))
 })
 const selectedAudioCount = computed(() => selectedAudioIds.value.length)
+const favoriteAudioIdSet = computed(() => new Set(props.favoriteAudioIds))
 const canPlayAllAsSuperTrack = computed(
   () => selectedAudioCount.value >= 2 || currentlyDisplayedAudioFiles.value.length >= 2,
 )
@@ -180,6 +183,10 @@ const hasVisibleItems = computed(() => {
     return filteredAudioFiles.value.length > 0
   }
   return visibleDirectories.value.length > 0 || visibleAudioFiles.value.length > 0
+})
+const isVirtualCollectionSelected = computed(() => {
+  const storageRef = props.selectedCollection?.storageRef as { kind?: unknown } | undefined
+  return storageRef?.kind === 'virtual'
 })
 
 const directoryBreadcrumbs = computed(() => {
@@ -249,6 +256,10 @@ function resolveAudioPathLabel(audio: AudioFileEntry): string {
 
 function isPlaying(audioId: string): boolean {
   return playingAudioIds.value.has(audioId)
+}
+
+function isFavorite(audioId: string): boolean {
+  return favoriteAudioIdSet.value.has(audioId)
 }
 
 function updateSelectedAudioMeta(patch: Partial<AudioMeta>): void {
@@ -352,7 +363,7 @@ function onAudioIconChange(audioId: string, event: Event): void {
 function onImportChange(event: Event): void {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
-  if (props.selectedCollection && files.length > 0) {
+  if (props.selectedCollection && !isVirtualCollectionSelected.value && files.length > 0) {
     emit('importFiles', props.selectedCollection.name, files, normalizePath(currentDirectoryPath.value))
   }
   input.value = ''
@@ -482,7 +493,7 @@ function onDrop(event: DragEvent): void {
   event.stopPropagation()
   isDropOver.value = false
   dragOverDirectoryPath.value = null
-  if (!props.selectedCollection || !event.dataTransfer?.files?.length) {
+  if (!props.selectedCollection || isVirtualCollectionSelected.value || !event.dataTransfer?.files?.length) {
     return
   }
   const files = Array.from(event.dataTransfer.files)
@@ -527,7 +538,7 @@ function onDirectoryDrop(directoryPath: string, event: DragEvent): void {
   event.stopPropagation()
   dragOverDirectoryPath.value = null
   isDropOver.value = false
-  if (!props.selectedCollection || !event.dataTransfer) {
+  if (!props.selectedCollection || isVirtualCollectionSelected.value || !event.dataTransfer) {
     return
   }
 
@@ -681,7 +692,7 @@ function onAudioContextMenu(audio: AudioFileEntry, event: MouseEvent): void {
 }
 
 function onAudioFilesListContextMenu(event: MouseEvent): void {
-  if (!props.selectedCollection || isSearchActive.value) {
+  if (!props.selectedCollection || isSearchActive.value || isVirtualCollectionSelected.value) {
     return
   }
 
@@ -703,7 +714,7 @@ function onAudioFilesListContextMenu(event: MouseEvent): void {
 }
 
 function newFolderFromAudioFilesContextMenu(): void {
-  if (!props.selectedCollection) {
+  if (!props.selectedCollection || isVirtualCollectionSelected.value) {
     return
   }
 
@@ -753,7 +764,7 @@ function goUpDirectory(): void {
 
 function createDirectory(): void {
   const trimmed = newDirectoryName.value.trim()
-  if (!props.selectedCollection || !trimmed) {
+  if (!props.selectedCollection || isVirtualCollectionSelected.value || !trimmed) {
     return
   }
 
@@ -923,7 +934,14 @@ watch(
       />
       <label class="px-3 py-2 rounded-lg bg-indigo-400 hover:bg-indigo-300 text-slate-900 text-sm font-semibold cursor-pointer">
         Import Audio
-        <input type="file" accept="audio/*" multiple class="hidden" @change="onImportChange" />
+        <input
+          type="file"
+          accept="audio/*"
+          multiple
+          class="hidden"
+          :disabled="!props.selectedCollection || isVirtualCollectionSelected"
+          @change="onImportChange"
+        />
       </label>
       <button
         type="button"
@@ -948,7 +966,7 @@ watch(
         <button
           type="button"
           class="rounded-md border border-slate-600 px-2 py-1 text-xs text-slate-200 hover:bg-slate-700 disabled:opacity-50"
-          :disabled="!currentDirectoryPath || isSearchActive"
+          :disabled="!currentDirectoryPath || isSearchActive || isVirtualCollectionSelected"
           @click="goUpDirectory"
         >
           Up
@@ -956,7 +974,7 @@ watch(
         <button
           type="button"
           class="text-cyan-200 hover:text-cyan-100 cursor-pointer"
-          :class="!props.selectedCollection || isSearchActive ? 'pointer-events-none opacity-50' : ''"
+          :class="!props.selectedCollection || isSearchActive || isVirtualCollectionSelected ? 'pointer-events-none opacity-50' : ''"
           @click="goToDirectory('')"
         >
           Root
@@ -966,7 +984,7 @@ watch(
           <button
             type="button"
             class="text-cyan-200 hover:text-cyan-100 truncate cursor-pointer"
-            :class="isSearchActive ? 'pointer-events-none opacity-50' : ''"
+            :class="isSearchActive || isVirtualCollectionSelected ? 'pointer-events-none opacity-50' : ''"
             @click="goToDirectory(crumb.path)"
           >
             {{ crumb.label }}
@@ -1027,13 +1045,13 @@ watch(
           type="text"
           class="w-52 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-100"
           placeholder="New folder name"
-          :disabled="!props.selectedCollection || isSearchActive"
+          :disabled="!props.selectedCollection || isSearchActive || isVirtualCollectionSelected"
           @keydown.enter.prevent="createDirectory"
         />
         <button
           type="button"
           class="rounded-lg border border-cyan-500/60 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
-          :disabled="!props.selectedCollection || isSearchActive || !newDirectoryName.trim()"
+          :disabled="!props.selectedCollection || isSearchActive || isVirtualCollectionSelected || !newDirectoryName.trim()"
           @click="createDirectory"
         >
           {{ selectedAudioCount > 1 ? 'New folder with selection' : 'New Folder' }}
@@ -1094,7 +1112,7 @@ watch(
         <article
           v-for="audio in currentlyDisplayedAudioFiles"
           :key="audio.id"
-          class="rounded-xl border p-3 transition-all duration-200"
+          class="relative rounded-xl border p-3 transition-all duration-200"
           :class="[
             selectedAudioIdSet.has(audio.id) ? 'bg-slate-700' : 'bg-slate-900 hover:bg-slate-700/70',
             isPlaying(audio.id)
@@ -1107,6 +1125,18 @@ watch(
           @dragstart="(event) => onCardDragStart(audio, event)"
           @contextmenu="(event) => onAudioContextMenu(audio, event)"
         >
+          <button
+            type="button"
+            class="absolute right-2 top-2 z-10 rounded-md px-2 py-1 text-xs font-semibold transition-colors"
+            :class="
+              isFavorite(audio.id)
+                ? 'bg-amber-400/30 text-amber-100 hover:bg-amber-400/40'
+                : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700'
+            "
+            @click.stop="emit('toggleFavoriteAudio', audio.id)"
+          >
+            {{ isFavorite(audio.id) ? '★ Favorite' : '☆ Favorite' }}
+          </button>
           <button
             type="button"
             class="w-full text-left"

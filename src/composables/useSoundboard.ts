@@ -122,6 +122,25 @@ function createTrackId(audioId: string): string {
   return `${audioId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+const FAVORITE_AUDIO_IDS_STORAGE_KEY = 'dungeon-jukebox.favorite-audio-ids'
+const FAVORITES_VIRTUAL_COLLECTION_NAME = '__favorites__'
+
+function sanitizeFavoriteAudioIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const nextIds = value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .map((entry) => entry.trim())
+
+  return [...new Set(nextIds)]
+}
+
+function isVirtualCollectionName(name: string | null): boolean {
+  return name === FAVORITES_VIRTUAL_COLLECTION_NAME
+}
+
 export function useSoundboard(
   options?: {
     storageAdapter?: StorageAdapter
@@ -139,6 +158,7 @@ export function useSoundboard(
   const restoring = ref(false)
   const autoTitling = ref(false)
   const status = ref<string>('Connect a local folder to start.')
+  const favoriteAudioIds = ref<string[]>([])
 
   const isFileSystemAccessSupported = storageAdapter.isSupported()
 
@@ -149,6 +169,27 @@ export function useSoundboard(
   const allAudioFiles = computed(() =>
     collections.value.flatMap((collection) => collection.audioFiles.map((audio) => audio)),
   )
+  const favoriteAudioFiles = computed(() => {
+    if (favoriteAudioIds.value.length === 0) {
+      return [] as AudioFileEntry[]
+    }
+
+    const byId = new Map(allAudioFiles.value.map((audio) => [audio.id, audio] as const))
+    return favoriteAudioIds.value
+      .map((audioId) => byId.get(audioId))
+      .filter((audio): audio is AudioFileEntry => Boolean(audio))
+  })
+
+  if (typeof window !== 'undefined') {
+    const rawFavoriteAudioIds = window.localStorage.getItem(FAVORITE_AUDIO_IDS_STORAGE_KEY)
+    if (rawFavoriteAudioIds) {
+      try {
+        favoriteAudioIds.value = sanitizeFavoriteAudioIds(JSON.parse(rawFavoriteAudioIds))
+      } catch {
+        favoriteAudioIds.value = []
+      }
+    }
+  }
 
   function clampVolume(volume: number): number {
     if (!Number.isFinite(volume)) {
@@ -290,6 +331,7 @@ export function useSoundboard(
       selectedCollectionName.value = nextCollections[0]?.name ?? null
     } else if (
       selectedCollectionName.value &&
+      !isVirtualCollectionName(selectedCollectionName.value) &&
       !nextCollections.some((collection) => collection.name === selectedCollectionName.value)
     ) {
       selectedCollectionName.value = nextCollections[0]?.name ?? null
@@ -322,6 +364,67 @@ export function useSoundboard(
     } finally {
       loading.value = false
     }
+  }
+
+  function persistFavoriteAudioIds(): void {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    window.localStorage.setItem(FAVORITE_AUDIO_IDS_STORAGE_KEY, JSON.stringify(favoriteAudioIds.value))
+  }
+
+  function setFavoriteAudioIds(nextIds: string[]): void {
+    favoriteAudioIds.value = sanitizeFavoriteAudioIds(nextIds)
+    persistFavoriteAudioIds()
+  }
+
+  function addFavoriteAudio(audioId: string): void {
+    const trimmedAudioId = audioId.trim()
+    if (!trimmedAudioId) {
+      return
+    }
+    if (favoriteAudioIds.value.includes(trimmedAudioId)) {
+      return
+    }
+    setFavoriteAudioIds([...favoriteAudioIds.value, trimmedAudioId])
+  }
+
+  function addFavoriteAudioBatch(audioIds: string[]): void {
+    if (audioIds.length === 0) {
+      return
+    }
+    setFavoriteAudioIds([...favoriteAudioIds.value, ...audioIds])
+  }
+
+  function removeFavoriteAudio(audioId: string): void {
+    const trimmedAudioId = audioId.trim()
+    if (!trimmedAudioId) {
+      return
+    }
+    if (!favoriteAudioIds.value.includes(trimmedAudioId)) {
+      return
+    }
+    setFavoriteAudioIds(favoriteAudioIds.value.filter((entry) => entry !== trimmedAudioId))
+  }
+
+  function toggleFavoriteAudio(audioId: string): void {
+    const trimmedAudioId = audioId.trim()
+    if (!trimmedAudioId) {
+      return
+    }
+    if (favoriteAudioIds.value.includes(trimmedAudioId)) {
+      removeFavoriteAudio(trimmedAudioId)
+      return
+    }
+    addFavoriteAudio(trimmedAudioId)
+  }
+
+  function clearFavoriteAudio(): void {
+    if (favoriteAudioIds.value.length === 0) {
+      return
+    }
+    setFavoriteAudioIds([])
   }
 
   async function connectFolder(): Promise<void> {
@@ -1420,6 +1523,19 @@ export function useSoundboard(
     return storageAdapter.resolveAudioIconUrl(audio)
   }
 
+  watch(
+    () => allAudioFiles.value.map((audio) => audio.id).join('|'),
+    () => {
+      const validAudioIds = new Set(allAudioFiles.value.map((audio) => audio.id))
+      const filteredFavoriteAudioIds = favoriteAudioIds.value.filter((audioId) => validAudioIds.has(audioId))
+      if (filteredFavoriteAudioIds.length === favoriteAudioIds.value.length) {
+        return
+      }
+      setFavoriteAudioIds(filteredFavoriteAudioIds)
+    },
+    { immediate: true },
+  )
+
   onBeforeUnmount(() => {
     stopAllTracks()
     if (webAudioContext) {
@@ -1440,6 +1556,8 @@ export function useSoundboard(
     selectedCollectionName,
     selectedCollection,
     allAudioFiles,
+    favoriteAudioIds,
+    favoriteAudioFiles,
     activeTracks,
     globalVolume,
     status,
@@ -1470,6 +1588,11 @@ export function useSoundboard(
     updateAudioMetaBatch,
     setAudioIcon,
     deleteAudioFile,
+    addFavoriteAudio,
+    addFavoriteAudioBatch,
+    removeFavoriteAudio,
+    toggleFavoriteAudio,
+    clearFavoriteAudio,
     moveAudioFilesToDirectory,
     moveAudioToDirectory,
     moveAudioFilesToCollection,

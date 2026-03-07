@@ -20,25 +20,27 @@ const emit = defineEmits<{
 
 const isDropOver = ref(false)
 
+function readDraggedAudioIds(event: DragEvent): string[] {
+  const rawAudioIds = event.dataTransfer?.getData('application/x-audio-ids') ?? ''
+  if (rawAudioIds) {
+    try {
+      const parsed = JSON.parse(rawAudioIds)
+      if (Array.isArray(parsed)) {
+        return [...new Set(parsed.filter((audioId): audioId is string => typeof audioId === 'string' && audioId.length > 0))]
+      }
+    } catch {
+      // no-op
+    }
+  }
+  const singleAudioId = event.dataTransfer?.getData('application/x-audio-id')
+  return singleAudioId ? [singleAudioId] : []
+}
+
 function onDrop(event: DragEvent): void {
   event.preventDefault()
   isDropOver.value = false
 
-  const rawAudioIds = event.dataTransfer?.getData('application/x-audio-ids') ?? ''
-  const audioIds = (() => {
-    if (!rawAudioIds) {
-      return [] as string[]
-    }
-    try {
-      const parsed = JSON.parse(rawAudioIds)
-      if (!Array.isArray(parsed)) {
-        return [] as string[]
-      }
-      return parsed.filter((audioId): audioId is string => typeof audioId === 'string' && audioId.length > 0)
-    } catch {
-      return [] as string[]
-    }
-  })()
+  const audioIds = readDraggedAudioIds(event)
 
   if (audioIds.length > 1) {
     emit('playSuperAudio', audioIds)

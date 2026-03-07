@@ -7,6 +7,7 @@ const props = defineProps<{
   collectionIconUrls: Record<string, string>
   selectedCollectionName: string | null
   rootFolderName: string | null
+  nonConfigurableCollectionNames?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +32,14 @@ const configuringCollection = computed(() =>
   props.collections.find((collection) => collection.name === configuringCollectionName.value) ?? null,
 )
 
+const nonConfigurableCollectionNameSet = computed(
+  () => new Set(props.nonConfigurableCollectionNames ?? []),
+)
+
+function isNonConfigurableCollection(collectionName: string): boolean {
+  return nonConfigurableCollectionNameSet.value.has(collectionName)
+}
+
 function onCreateCollection(): void {
   const name = newCollectionName.value.trim()
   if (!name) {
@@ -54,6 +63,9 @@ function onConfigureIconChange(event: Event): void {
 }
 
 function openCollectionConfigure(collection: CollectionEntry): void {
+  if (isNonConfigurableCollection(collection.name)) {
+    return
+  }
   configuringCollectionName.value = collection.name
   configuringCollectionTitle.value = collection.title
   configuringIconFile.value = null
@@ -215,6 +227,7 @@ function onCollectionDrop(targetCollectionName: string, event: DragEvent): void 
             <span class="text-xs text-slate-300">{{ collection.audioFiles.length }} files</span>
           </button>
           <button
+            v-if="!isNonConfigurableCollection(collection.name)"
             class="shrink-0 px-2 py-1 rounded border border-slate-600 text-xs text-slate-200 hover:bg-slate-700"
             @click.stop="openCollectionConfigure(collection)"
           >

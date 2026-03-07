@@ -4,6 +4,7 @@ import AudioBrowser from '@/components/AudioBrowser.vue'
 import CollectionSidebar from '@/components/CollectionSidebar.vue'
 import TrackDeck from '@/components/TrackDeck.vue'
 import { useSoundboard } from '@/composables/useSoundboard'
+import type { CollectionEntry } from '@/types/soundboard'
 
 const {
   rootHandle,
@@ -11,6 +12,8 @@ const {
   selectedCollectionName,
   selectedCollection,
   allAudioFiles,
+  favoriteAudioIds,
+  favoriteAudioFiles,
   activeTracks,
   globalVolume,
   status,
@@ -41,6 +44,8 @@ const {
   updateAudioMetaBatch,
   setAudioIcon,
   deleteAudioFile,
+  addFavoriteAudioBatch,
+  toggleFavoriteAudio,
   moveAudioFilesToDirectory,
   moveAudioFilesToCollection,
   autoAssignTitlesWithOpenRouter,
@@ -51,6 +56,29 @@ const {
 const collectionIconUrls = ref<Record<string, string>>({})
 const audioIconUrls = ref<Record<string, string>>({})
 const currentDirectoryPath = ref('')
+const FAVORITES_VIRTUAL_COLLECTION_NAME = '__favorites__'
+
+const favoritesVirtualCollection = computed<CollectionEntry>(() => ({
+  name: FAVORITES_VIRTUAL_COLLECTION_NAME,
+  title: 'Favorites',
+  iconImage: null,
+  directoryPaths: [],
+  audioFiles: favoriteAudioFiles.value,
+  storageRef: {
+    kind: 'virtual',
+    id: FAVORITES_VIRTUAL_COLLECTION_NAME,
+  },
+}))
+const sidebarCollections = computed<CollectionEntry[]>(() => [
+  favoritesVirtualCollection.value,
+  ...collections.value,
+])
+const displayedSelectedCollection = computed<CollectionEntry | null>(() => {
+  if (selectedCollectionName.value === FAVORITES_VIRTUAL_COLLECTION_NAME) {
+    return favoritesVirtualCollection.value
+  }
+  return selectedCollection.value
+})
 
 const rootFolderName = computed(() => rootHandle.value?.name ?? null)
 const hasRootFolder = computed(() => !!rootHandle.value)
@@ -197,6 +225,20 @@ watch(
 )
 
 watch(
+  () => selectedCollectionName.value,
+  (nextName) => {
+    if (nextName === FAVORITES_VIRTUAL_COLLECTION_NAME) {
+      return
+    }
+    if (nextName && collections.value.some((collection) => collection.name === nextName)) {
+      return
+    }
+    selectedCollectionName.value = FAVORITES_VIRTUAL_COLLECTION_NAME
+  },
+  { immediate: true },
+)
+
+watch(
   () => allAudioFiles.value.map((audio) => `${audio.id}-${audio.metadata.iconImage}`).join('|'),
   async () => {
     await refreshAudioIconUrls()
@@ -224,9 +266,10 @@ onBeforeUnmount(() => {
     >
       <div class="col-span-2">
         <CollectionSidebar
-          :collections="collections"
+          :collections="sidebarCollections"
           :collection-icon-urls="collectionIconUrls"
           :selected-collection-name="selectedCollectionName"
+          :non-configurable-collection-names="[FAVORITES_VIRTUAL_COLLECTION_NAME]"
           :root-folder-name="rootFolderName"
           @connect-folder="connectFolder"
           @select-collection="
@@ -240,7 +283,10 @@ onBeforeUnmount(() => {
           @update-collection-title="(collectionName, title) => setCollectionTitle(collectionName, title)"
           @destroy-collection="(collectionName) => deleteCollection(collectionName)"
           @move-audio-to-collection="
-            (audioIds, targetCollectionName) => moveAudioFilesToCollection(audioIds, targetCollectionName)
+            (audioIds, targetCollectionName) =>
+              targetCollectionName === FAVORITES_VIRTUAL_COLLECTION_NAME
+                ? addFavoriteAudioBatch(audioIds)
+                : moveAudioFilesToCollection(audioIds, targetCollectionName)
           "
         />
       </div>
@@ -249,10 +295,11 @@ onBeforeUnmount(() => {
         <div class="grid grid-cols-12 gap-2">
           <div class="col-span-10">
             <AudioBrowser
-              :selected-collection="selectedCollection"
+              :selected-collection="displayedSelectedCollection"
               :all-collections="collections"
               :audio-icon-urls="audioIconUrls"
               :active-tracks="activeTracks"
+              :favorite-audio-ids="favoriteAudioIds"
               :current-directory-path="currentDirectoryPath"
               :is-auto-assigning-titles="autoTitling"
               @play-audio="playAudio"
@@ -296,6 +343,7 @@ onBeforeUnmount(() => {
               (collectionName, directoryPath) =>
                 deleteCollectionSubDirectory(collectionName, directoryPath)
             "
+              @toggle-favorite-audio="(audioId) => toggleFavoriteAudio(audioId)"
             />
           </div>
 
